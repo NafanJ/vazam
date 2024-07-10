@@ -23,6 +23,10 @@ def find_closest_voice_actor(new_audio_path):
     closest_actor_name = voice_actors[closest_index][0]
     return closest_actor_name, closest_distance
 
+# Function to determine if a distance is too high
+def is_distance_too_high(distance, threshold=5000.0):
+    return distance > threshold
+
 def main():
     start_time = time.time()
 
@@ -42,7 +46,11 @@ def main():
 
     # Perform the search with a new sample
     closest_actor_name, closest_distance = find_closest_voice_actor('seth_mcfarlane_test.mp3')
-    print(f"Most similar voice actor: {closest_actor_name} with distance: {closest_distance}")
+    
+    if is_distance_too_high(closest_distance):
+        print(f"No close match found. Closest actor: {closest_actor_name} with distance: {closest_distance}")
+    else:
+        print(f"Most similar voice actor: {closest_actor_name} with distance: {closest_distance}")
 
     end_time = time.time()
     elapsed_time = end_time - start_time
