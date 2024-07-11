@@ -9,6 +9,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.logging.Logger;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 
 @Service
 public class VoiceRecognitionService {
@@ -33,13 +35,34 @@ public class VoiceRecognitionService {
             ProcessBuilder pb = new ProcessBuilder("python3", PYTHON_SCRIPT_PATH, tempFile.getAbsolutePath());
             pb.redirectErrorStream(true);
             Process process = pb.start();
-            
+
+            // Read the output from the command
+            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            StringBuilder output = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                output.append(line).append("\n");
+            }
+
             int exitCode = process.waitFor();
             logger.info("Python script exit code: " + exitCode);
+            logger.info("Python script output: " + output.toString());
 
-            String output = new String(Files.readAllBytes(Paths.get("output.txt")));
-            logger.info("Python script output: " + output);
-            return output;
+            if (exitCode != 0) {
+                logger.severe("Python script failed with exit code: " + exitCode);
+                return "Error during voice recognition.";
+            }
+
+            // Check if output.txt exists
+            if (!Files.exists(Paths.get("output.txt"))) {
+                logger.severe("output.txt file not found");
+                return "Error: output.txt file not found.";
+            }
+
+            String result = new String(Files.readAllBytes(Paths.get("output.txt")));
+            logger.info("Result from output.txt: " + result);
+
+            return result;
         } catch (IOException | InterruptedException e) {
             e.printStackTrace();
             logger.severe("Error during voice recognition: " + e.getMessage());
