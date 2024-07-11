@@ -38,9 +38,10 @@ def main(audio_file_path):
     start_time = time.time()
 
     # Add voice actors to the database
-    add_voice_actor('Seth McFarlane', 'voice_actor_1.mp3')
-    add_voice_actor('Matt Groening', 'voice_actor_2.wav')
-    add_voice_actor('Mike Myers', 'voice_actor_3.wav')
+    add_voice_actor('Seth McFarlane', 'src/main/resources/audio/voice_actor_1.mp3')
+    add_voice_actor('Matt Groening', 'src/main/resources/audio/voice_actor_2.wav')
+    add_voice_actor('Mike Myers', 'src/main/resources/audio/voice_actor_3.wav')
+
 
     # Initialize FAISS index
     initialize_faiss()
