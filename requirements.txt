@@ -1,21 +1,34 @@
 # Vazam — Voice Actor Identification
-# Core ML / audio stack
+# Install: pip install -r requirements.txt
+
+# ── API framework ────────────────────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9     # file upload support for FastAPI
+
+# ── Deep learning / audio ────────────────────────────────────────────────────
+torch>=2.1.0
+torchaudio>=2.1.0
 
 # Speaker embedding model (ECAPA-TDNN, trained on VoxCeleb1+2)
 speechbrain>=1.0.0
 
-# Deep learning backend
-torch>=2.1.0
-torchaudio>=2.1.0
-
-# Voice / source separation (Demucs v4 htdemucs_ft)
+# Voice / source separation
 demucs>=4.0.0
 
-# Vector similarity search
-faiss-cpu>=1.7.4          # swap for faiss-gpu on GPU instances
-
-# Numerical computing
-numpy>=1.24.0
-
-# Voice activity detection + speaker diarization (requires HuggingFace token)
+# Voice activity detection + speaker diarization
+# Requires a free HuggingFace token (set HF_TOKEN env var)
+# Accept model terms at: https://hf.co/pyannote/voice-activity-detection
+#                         https://hf.co/pyannote/speaker-diarization-3.1
 pyannote.audio>=3.1.0
+
+# ── Vector search ────────────────────────────────────────────────────────────
+faiss-cpu>=1.7.4            # swap for faiss-gpu on GPU instances
+
+# ── Numerical / data ─────────────────────────────────────────────────────────
+numpy>=1.24.0
+requests>=2.31.0            # AniList seeder HTTP calls
+
+# ── Dev / testing (optional) ─────────────────────────────────────────────────
+# pytest>=8.0.0
+# httpx>=0.27.0             # async test client for FastAPI
