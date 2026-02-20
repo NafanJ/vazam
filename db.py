@@ -344,6 +344,47 @@ class VazamDB:
         row = self._conn.execute("SELECT COUNT(*) AS n FROM embeddings").fetchone()
         return row["n"]
 
+    def get_centroid_embeddings(
+        self,
+        verified_only: bool = False,
+    ) -> list[tuple[int, str, str, np.ndarray]]:
+        """Return one L2-normalized centroid per (actor_id, voice_label) group.
+
+        When an actor has multiple embeddings for the same character voice,
+        averaging them and re-normalizing produces a more stable representative
+        vector than any individual sample. This is the recommended index-build
+        strategy once you have ≥ 3 samples per voice label.
+
+        Returns list of (actor_id, actor_name, voice_label, centroid_embedding).
+        """
+        where = "WHERE e.verified = 1" if verified_only else ""
+        rows = self._conn.execute(
+            f"""
+            SELECT e.actor_id, a.name AS actor_name, e.voice_label, e.embedding_blob
+            FROM   embeddings e
+            JOIN   actors a ON a.id = e.actor_id
+            {where}
+            ORDER  BY e.actor_id, e.voice_label
+            """
+        ).fetchall()
+
+        # Group by (actor_id, voice_label)
+        from collections import defaultdict
+        groups: dict[tuple[int, str, str], list[np.ndarray]] = defaultdict(list)
+        for row in rows:
+            key = (row["actor_id"], row["actor_name"], row["voice_label"])
+            groups[key].append(_blob_to_array(row["embedding_blob"]))
+
+        centroids: list[tuple[int, str, str, np.ndarray]] = []
+        for (actor_id, actor_name, voice_label), vecs in groups.items():
+            centroid = np.mean(np.stack(vecs, axis=0), axis=0).astype("float32")
+            norm = np.linalg.norm(centroid)
+            if norm > 0:
+                centroid /= norm
+            centroids.append((actor_id, actor_name, voice_label, centroid))
+
+        return centroids
+
     # ------------------------------------------------------------------
     # Show-aware search helper
     # ------------------------------------------------------------------

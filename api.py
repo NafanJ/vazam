@@ -70,9 +70,19 @@ async def lifespan(app: FastAPI):
     db.close()
 
 
-def _rebuild_index() -> int:
-    """(Re)build the in-memory FAISS index from the database."""
-    entries = db.get_all_embeddings()
+def _rebuild_index(strategy: str = "individual") -> int:
+    """(Re)build the in-memory FAISS index from the database.
+
+    strategy:
+      "individual" — one FAISS entry per stored embedding (default)
+      "centroid"   — one entry per (actor, voice_label) group, averaged and
+                     re-normalized; reduces index size and improves stability
+                     when ≥ 3 samples exist per voice label
+    """
+    if strategy == "centroid":
+        entries = db.get_centroid_embeddings()
+    else:
+        entries = db.get_all_embeddings()
     pipeline.load_index(entries)
     return len(entries)
 
@@ -354,16 +364,30 @@ def get_show(show_id: int):
 # ── Routes: admin ─────────────────────────────────────────────────────────────
 
 @app.post("/index/rebuild", response_model=IndexRebuildResponse, tags=["Admin"])
-def rebuild_index():
+def rebuild_index(
+    strategy: str = "individual",
+):
     """Rebuild the FAISS index from all embeddings in the database.
 
-    Call this after bulk-importing embeddings or after a server restart
-    where the index wasn't persisted.
+    **strategy** options:
+
+    - `individual` *(default)* — one FAISS entry per stored embedding row.
+      Best when you have 1-2 samples per voice label.
+
+    - `centroid` — one entry per *(actor, voice_label)* group, computed as
+      the L2-normalized mean of all samples in that group. Reduces index
+      size and improves match stability once you have ≥ 3 samples per label.
+
+    Call this after bulk-importing via `embed_batch.py` or after a server
+    restart where the in-memory index was lost.
     """
-    n = _rebuild_index()
+    if strategy not in ("individual", "centroid"):
+        from fastapi import HTTPException
+        raise HTTPException(422, "strategy must be 'individual' or 'centroid'")
+    n = _rebuild_index(strategy)
     return IndexRebuildResponse(
         embeddings_loaded=n,
-        message=f"Index rebuilt with {n} embeddings.",
+        message=f"Index rebuilt ({strategy}) with {n} entries.",
     )
 
 
