@@ -1,0 +1,21 @@
+# Vazam — Voice Actor Identification
+# Core ML / audio stack
+
+# Speaker embedding model (ECAPA-TDNN, trained on VoxCeleb1+2)
+speechbrain>=1.0.0
+
+# Deep learning backend
+torch>=2.1.0
+torchaudio>=2.1.0
+
+# Voice / source separation (Demucs v4 htdemucs_ft)
+demucs>=4.0.0
+
+# Vector similarity search
+faiss-cpu>=1.7.4          # swap for faiss-gpu on GPU instances
+
+# Numerical computing
+numpy>=1.24.0
+
+# Voice activity detection + speaker diarization (requires HuggingFace token)
+pyannote.audio>=3.1.0
