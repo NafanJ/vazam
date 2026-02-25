@@ -49,7 +49,7 @@ query PopularAnime($page: Int, $perPage: Int) {
 """
 
 SHOW_CAST_QUERY = """
-query ShowCast($mediaId: Int, $page: Int, $lang: VoiceActorLanguage) {
+query ShowCast($mediaId: Int, $page: Int, $lang: StaffLanguage) {
   Media(id: $mediaId) {
     id
     title { english romaji }
