@@ -30,6 +30,10 @@ import tempfile
 from contextlib import asynccontextmanager
 from typing import Optional
 
+from dotenv import load_dotenv
+
+load_dotenv()  # loads .env into os.environ (no-op if file absent)
+
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware

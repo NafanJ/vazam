@@ -1,0 +1,27 @@
+# Environment variables — never commit real secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Database
+*.db
+
+# Audio samples and test files
+*.mp3
+*.wav
+*.m4a
+
+# ML model caches
+.cache/
+pretrained_models/
+
+# OS
+.DS_Store
+Thumbs.db
