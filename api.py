@@ -13,14 +13,15 @@ Endpoints
   GET  /shows                    — List all shows
   GET  /shows/{id}               — Show details + cast
   GET  /shows/search             — Search shows by title
-  POST /index/rebuild            — Rebuild FAISS index from all stored embeddings
+  POST /index/rebuild            — No-op (pgvector manages indexes automatically)
   GET  /health                   — Liveness check
 
 Environment variables
 ---------------------
-  HF_TOKEN   HuggingFace access token (required for VAD / diarization)
-  DB_PATH    SQLite database path (default: vazam.db)
-  DEVICE     torch device (default: auto-detect cuda/cpu)
+  HF_TOKEN      HuggingFace access token (required for VAD / diarization)
+  SUPABASE_URL  Supabase project URL
+  SUPABASE_KEY  Supabase service-role key
+  DEVICE        torch device (default: auto-detect cuda/cpu)
 """
 
 from __future__ import annotations
@@ -45,7 +46,6 @@ from pipeline import VazamPipeline
 # ── Config ───────────────────────────────────────────────────────────────────
 
 HF_TOKEN = os.getenv("HF_TOKEN", "")
-DB_PATH  = os.getenv("DB_PATH",  "vazam.db")
 DEVICE   = os.getenv("DEVICE",   "")
 
 # ── App state ────────────────────────────────────────────────────────────────
@@ -58,37 +58,18 @@ pipeline: VazamPipeline
 async def lifespan(app: FastAPI):
     global db, pipeline
 
-    db = VazamDB(DB_PATH)
+    db = VazamDB()
     pipeline = VazamPipeline(
+        db=db,
         hf_token=HF_TOKEN,
         device=DEVICE or None,
         use_vad=bool(HF_TOKEN),
         use_diarization=bool(HF_TOKEN),
     )
 
-    # Load existing embeddings into FAISS index at startup
-    _rebuild_index()
-
     yield
 
     db.close()
-
-
-def _rebuild_index(strategy: str = "individual") -> int:
-    """(Re)build the in-memory FAISS index from the database.
-
-    strategy:
-      "individual" — one FAISS entry per stored embedding (default)
-      "centroid"   — one entry per (actor, voice_label) group, averaged and
-                     re-normalized; reduces index size and improves stability
-                     when ≥ 3 samples exist per voice label
-    """
-    if strategy == "centroid":
-        entries = db.get_centroid_embeddings()
-    else:
-        entries = db.get_all_embeddings()
-    pipeline.load_index(entries)
-    return len(entries)
 
 
 # ── Application ──────────────────────────────────────────────────────────────
@@ -187,13 +168,12 @@ async def identify(
     - Set `isolate=true` when recording contains background music or SFX.
     - Set `show_id` to restrict matching to a known cast (show-aware search).
     """
-    if pipeline.index.size == 0:
+    if db.get_embedding_count() == 0:
         raise HTTPException(503, "No embeddings in index. Add voice samples first.")
 
     path = await _save_upload(audio)
     try:
-        actor_ids = db.get_actor_ids_for_show(show_id) if show_id else None
-        results = pipeline.identify(path, top_k=top_k, isolate=isolate, actor_ids=actor_ids)
+        results = pipeline.identify(path, top_k=top_k, isolate=isolate, show_id=show_id)
     finally:
         os.unlink(path)
 
@@ -211,7 +191,7 @@ async def identify_multi(
     Requires HF_TOKEN to be set (pyannote speaker-diarization-3.1).
     Falls back to single-speaker identification if diarization is unavailable.
     """
-    if pipeline.index.size == 0:
+    if db.get_embedding_count() == 0:
         raise HTTPException(503, "No embeddings in index. Add voice samples first.")
 
     path = await _save_upload(audio)
@@ -245,7 +225,7 @@ def create_actor(body: ActorCreate):
 @app.get("/actors", response_model=list[ActorResponse], tags=["Actors"])
 def list_actors(limit: int = 100, offset: int = 0):
     rows = db.list_actors(limit=limit, offset=offset)
-    return [ActorResponse(id=r["id"], name=r["name"], bio=None, image_url=r["image_url"]) for r in rows]
+    return [ActorResponse(id=r["id"], name=r["name"], bio=None, image_url=r.get("image_url")) for r in rows]
 
 
 @app.get("/actors/{actor_id}", tags=["Actors"])
@@ -259,9 +239,9 @@ def get_actor(actor_id: int):
     return {
         "id":          actor["id"],
         "name":        actor["name"],
-        "bio":         actor["bio"],
-        "image_url":   actor["image_url"],
-        "anilist_id":  actor["anilist_id"],
+        "bio":         actor.get("bio"),
+        "image_url":   actor.get("image_url"),
+        "anilist_id":  actor.get("anilist_id"),
         "filmography": [
             {
                 "character_name": r["character_name"],
@@ -284,11 +264,7 @@ async def add_embedding(
     isolate: bool = Form(False, description="Run Demucs isolation on this sample"),
     audio_source: str = Form("", description="Source description e.g. 'convention_panel_2024'"),
 ):
-    """Upload an audio sample for a voice actor, generate an embedding, and store it.
-
-    Immediately updates the in-memory FAISS index so the actor is searchable
-    without a full index rebuild.
-    """
+    """Upload an audio sample for a voice actor, generate an embedding, and store it."""
     actor = db.get_actor(actor_id)
     if not actor:
         raise HTTPException(404, f"Actor {actor_id} not found")
@@ -308,10 +284,7 @@ async def add_embedding(
         verified=False,
     )
 
-    # Incrementally update the live index
-    pipeline.add_entry(actor_id, actor["name"], voice_label, embedding)
-
-    return {"embedding_id": emb_id, "index_size": pipeline.index.size}
+    return {"embedding_id": emb_id, "index_size": db.get_embedding_count()}
 
 
 # ── Routes: shows ─────────────────────────────────────────────────────────────
@@ -338,13 +311,13 @@ def create_show(body: ShowCreate):
 def list_shows(limit: int = 100, offset: int = 0):
     rows = db.list_shows(limit=limit, offset=offset)
     return [ShowResponse(id=r["id"], title=r["title"], media_type=r["media_type"],
-                         year=r["year"], image_url=r["image_url"]) for r in rows]
+                         year=r["year"], image_url=r.get("image_url")) for r in rows]
 
 
 @app.get("/shows/search", tags=["Shows"])
 def search_shows(q: str):
     rows = db.search_show(q)
-    return [{"id": r["id"], "title": r["title"], "year": r["year"]} for r in rows]
+    return [{"id": r["id"], "title": r["title"], "year": r.get("year")} for r in rows]
 
 
 @app.get("/shows/{show_id}", tags=["Shows"])
@@ -358,9 +331,9 @@ def get_show(show_id: int):
     return {
         "id":         show["id"],
         "title":      show["title"],
-        "media_type": show["media_type"],
-        "year":       show["year"],
-        "image_url":  show["image_url"],
+        "media_type": show.get("media_type"),
+        "year":       show.get("year"),
+        "image_url":  show.get("image_url"),
         "cast": [{"actor_id": r["id"], "actor_name": r["name"]} for r in cast],
     }
 
@@ -368,40 +341,27 @@ def get_show(show_id: int):
 # ── Routes: admin ─────────────────────────────────────────────────────────────
 
 @app.post("/index/rebuild", response_model=IndexRebuildResponse, tags=["Admin"])
-def rebuild_index(
-    strategy: str = "individual",
-):
-    """Rebuild the FAISS index from all embeddings in the database.
+def rebuild_index(strategy: str = "individual"):
+    """No-op endpoint kept for backward compatibility.
 
-    **strategy** options:
-
-    - `individual` *(default)* — one FAISS entry per stored embedding row.
-      Best when you have 1-2 samples per voice label.
-
-    - `centroid` — one entry per *(actor, voice_label)* group, computed as
-      the L2-normalized mean of all samples in that group. Reduces index
-      size and improves match stability once you have ≥ 3 samples per label.
-
-    Call this after bulk-importing via `embed_batch.py` or after a server
-    restart where the in-memory index was lost.
+    pgvector manages its HNSW index automatically — no manual rebuild needed.
+    Returns the current embedding count.
     """
-    if strategy not in ("individual", "centroid"):
-        from fastapi import HTTPException
-        raise HTTPException(422, "strategy must be 'individual' or 'centroid'")
-    n = _rebuild_index(strategy)
+    n = db.get_embedding_count()
     return IndexRebuildResponse(
         embeddings_loaded=n,
-        message=f"Index rebuilt ({strategy}) with {n} entries.",
+        message=f"pgvector index is managed automatically. {n} embeddings in store.",
     )
 
 
 @app.get("/health", tags=["Admin"])
 def health():
+    n = db.get_embedding_count()
     return {
-        "status":         "ok",
-        "index_size":     pipeline.index.size,
-        "db_embeddings":  db.get_embedding_count(),
-        "vad_enabled":    pipeline.use_vad,
-        "diarization":    pipeline.use_diarization,
-        "device":         pipeline.device,
+        "status":       "ok",
+        "index_size":   n,
+        "db_embeddings": n,
+        "vad_enabled":  pipeline.use_vad,
+        "diarization":  pipeline.use_diarization,
+        "device":       pipeline.device,
     }

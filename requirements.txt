@@ -22,8 +22,11 @@ demucs>=4.0.0
 #                         https://hf.co/pyannote/speaker-diarization-3.1
 pyannote.audio>=3.1.0
 
-# ── Vector search ────────────────────────────────────────────────────────────
-faiss-cpu>=1.7.4            # swap for faiss-gpu on GPU instances
+# ── Database / vector search ─────────────────────────────────────────────────
+supabase>=2.0.0             # Supabase Python client (replaces SQLite + faiss-cpu)
+
+# ── Audio scraping ───────────────────────────────────────────────────────────
+yt-dlp>=2024.0.0            # YouTube audio download for automated embedding collection
 
 # ── Numerical / data ─────────────────────────────────────────────────────────
 numpy>=1.24.0
