@@ -2,7 +2,7 @@
 embed_batch.py — Bulk audio-to-embedding importer
 
 Walks a directory of labeled audio samples, generates ECAPA-TDNN embeddings,
-and stores them in the Vazam SQLite database.
+and stores them in Supabase (via VazamDB).
 
 Expected directory layout
 --------------------------
@@ -30,16 +30,16 @@ Usage
     # Import only verified-quality samples into the verified bucket
     python embed_batch.py samples/ --verified
 
-    # Rebuild the FAISS index when done (hits the running API)
-    python embed_batch.py samples/ --rebuild-index --api-url http://localhost:8000
+Environment variables
+---------------------
+    SUPABASE_URL   https://<project-ref>.supabase.co
+    SUPABASE_KEY   <service_role_key>
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import sys
-import time
 from pathlib import Path
 
 import numpy as np
@@ -72,11 +72,9 @@ def _iter_samples(root: Path):
 
 def run_batch(
     root: Path,
-    db_path: str = "vazam.db",
     isolate: bool = False,
     verified: bool = False,
     dry_run: bool = False,
-    rebuild_index_url: str = "",
 ) -> None:
     samples = list(_iter_samples(root))
 
@@ -96,8 +94,8 @@ def run_batch(
     from db import VazamDB
     from pipeline import VazamPipeline, isolate_vocals
 
-    db       = VazamDB(db_path)
-    pipeline = VazamPipeline(hf_token="", use_vad=False, use_diarization=False)
+    db       = VazamDB()
+    pipeline = VazamPipeline(db=db, hf_token="", use_vad=False, use_diarization=False)
 
     stats = {"ok": 0, "skipped": 0, "error": 0}
     actor_cache: dict[str, int] = {}   # actor_name → db id
@@ -111,7 +109,6 @@ def run_batch(
             if actor_name not in actor_cache:
                 actor_id = db.add_actor(actor_name)
                 actor_cache[actor_name] = actor_id
-                print(f"           actor id: {actor_id} ({'new' if i == 1 or actor_name not in actor_cache else 'existing'})")
             actor_id = actor_cache[actor_name]
 
             # Generate embedding
@@ -121,7 +118,7 @@ def run_batch(
 
             embedding = pipeline.embed_file(path_str, isolate=False)
 
-            # Store in DB
+            # Store in Supabase
             db.add_embedding(
                 actor_id=actor_id,
                 embedding=embedding,
@@ -147,24 +144,6 @@ def run_batch(
     print(f"  Errors    : {stats['error']}")
     print(f"  Skipped   : {stats['skipped']}")
 
-    if rebuild_index_url:
-        _trigger_index_rebuild(rebuild_index_url)
-
-
-def _trigger_index_rebuild(api_url: str) -> None:
-    import urllib.request
-    import urllib.error
-    url = api_url.rstrip("/") + "/index/rebuild"
-    print(f"\nRebuilding FAISS index via {url} …")
-    try:
-        req = urllib.request.Request(url, method="POST")
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            import json
-            body = json.loads(resp.read())
-            print(f"  Index rebuilt with {body['embeddings_loaded']} embeddings.")
-    except urllib.error.URLError as exc:
-        print(f"  ✗ Could not reach API: {exc}. Rebuild manually with POST /index/rebuild")
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -177,15 +156,12 @@ def main() -> None:
         type=Path,
         help="Root directory containing <Actor>/<VoiceLabel>/<audio> structure",
     )
-    parser.add_argument("--db",      default="vazam.db", help="SQLite database path")
     parser.add_argument("--isolate", action="store_true",
                         help="Run Demucs vocal isolation on each file before embedding")
     parser.add_argument("--verified", action="store_true",
                         help="Mark imported embeddings as verified (higher trust)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print what would be imported without writing to DB")
-    parser.add_argument("--rebuild-index", metavar="API_URL", default="",
-                        help="After import, POST /index/rebuild to this API URL")
     args = parser.parse_args()
 
     if not args.root.exists():
@@ -194,11 +170,9 @@ def main() -> None:
 
     run_batch(
         root=args.root,
-        db_path=args.db,
         isolate=args.isolate,
         verified=args.verified,
         dry_run=args.dry_run,
-        rebuild_index_url=args.rebuild_index,
     )
 
 

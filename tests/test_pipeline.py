@@ -1,11 +1,11 @@
 """
 test_pipeline.py — unit tests for pipeline.py
 
-All ML model calls are mocked. Tests focus on the logic in:
-  - EmbeddingIndex (FAISS wrapper)
+All ML model calls are mocked. Tests cover:
+  - IdentificationResult data class
   - SpeakerSegment / merge_speaker_segments
   - extract_speech_audio
-  - VazamPipeline.identify / identify_multi
+  - VazamPipeline.identify / identify_multi (using a mocked VazamDB)
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ import torch
 from pipeline import (
     CONFIDENT_THRESHOLD,
     EMBEDDING_DIM,
-    EmbeddingIndex,
     IdentificationResult,
     SpeakerSegment,
     VazamPipeline,
@@ -39,87 +38,17 @@ def _rand_emb(seed: int = 0, dim: int = EMBEDDING_DIM) -> np.ndarray:
     return _norm(rng.standard_normal(dim).astype("float32"))
 
 
-# ── EmbeddingIndex ────────────────────────────────────────────────────────────
-
-class TestEmbeddingIndex:
-    def test_empty_index_search_returns_empty(self):
-        idx = EmbeddingIndex()
-        assert idx.search(_rand_emb()) == []
-
-    def test_size_zero_on_init(self):
-        assert EmbeddingIndex().size == 0
-
-    def test_add_single_entry(self):
-        idx = EmbeddingIndex()
-        emb = _rand_emb(0)
-        idx.add(1, "Steve Blum", "Spike Spiegel", emb)
-        assert idx.size == 1
-
-    def test_search_returns_correct_actor(self):
-        idx = EmbeddingIndex()
-        emb = _rand_emb(0)
-        idx.add(1, "Steve Blum", "Spike Spiegel", emb)
-
-        # Searching with the same vector should return similarity ~1.0
-        results = idx.search(emb, top_k=1)
-        assert len(results) == 1
-        assert results[0].actor_name == "Steve Blum"
-        assert results[0].confidence > 0.99
-
-    def test_search_top_k(self):
-        idx = EmbeddingIndex()
-        for i in range(5):
-            idx.add(i, f"Actor {i}", "Role", _rand_emb(i))
-
-        results = idx.search(_rand_emb(0), top_k=3)
-        assert len(results) == 3
-
-    def test_search_top_k_capped_at_index_size(self):
-        idx = EmbeddingIndex()
-        idx.add(1, "Only Actor", "Role", _rand_emb(0))
-        results = idx.search(_rand_emb(0), top_k=10)
-        assert len(results) == 1
-
-    def test_build_from_list(self):
-        entries = [
-            (i, f"Actor {i}", "Role", _rand_emb(i))
-            for i in range(4)
-        ]
-        idx = EmbeddingIndex()
-        idx.build_from_list(entries)
-        assert idx.size == 4
-
-    def test_build_from_empty_list(self):
-        idx = EmbeddingIndex()
-        idx.build_from_list([])
-        assert idx.size == 0
-        assert idx.search(_rand_emb()) == []
-
-    def test_closest_vector_is_ranked_first(self):
-        """The vector most similar to the query should come back first."""
-        target = _rand_emb(99)
-        noise  = _rand_emb(1)
-
-        idx = EmbeddingIndex()
-        idx.add(1, "Wrong Actor", "Role", noise)
-        idx.add(2, "Right Actor", "Role", target)
-
-        results = idx.search(target, top_k=2)
-        assert results[0].actor_name == "Right Actor"
-
-    def test_save_and_load(self, tmp_path):
-        idx = EmbeddingIndex()
-        emb = _rand_emb(0)
-        idx.add(1, "Steve Blum", "Spike Spiegel", emb)
-
-        save_path = str(tmp_path / "index.faiss")
-        idx.save(save_path)
-
-        idx2 = EmbeddingIndex()
-        idx2.load(save_path, [(1, "Steve Blum", "Spike Spiegel")])
-        assert idx2.size == 1
-        results = idx2.search(emb, top_k=1)
-        assert results[0].actor_name == "Steve Blum"
+def _make_db_rows(*actor_names: str, similarity: float = 0.95) -> list[dict]:
+    """Build fake search_embeddings rows for the given actor names."""
+    return [
+        {
+            "actor_id":   i + 1,
+            "actor_name": name,
+            "voice_label": "Natural Voice",
+            "similarity": similarity,
+        }
+        for i, name in enumerate(actor_names)
+    ]
 
 
 # ── IdentificationResult ──────────────────────────────────────────────────────
@@ -141,11 +70,11 @@ class TestIdentificationResult:
     def test_to_dict_keys(self):
         r = IdentificationResult(1, "Alice", "Raven", 0.82)
         d = r.to_dict()
-        assert d["actor_id"] == 1
-        assert d["actor_name"] == "Alice"
+        assert d["actor_id"]       == 1
+        assert d["actor_name"]     == "Alice"
         assert d["character_name"] == "Raven"
-        assert d["confidence"] == round(0.82, 4)
-        assert d["match_level"] == "confident"
+        assert d["confidence"]     == round(0.82, 4)
+        assert d["match_level"]    == "confident"
 
     def test_to_dict_match_level_possible(self):
         r = IdentificationResult(1, "A", "B", 0.60)
@@ -171,11 +100,11 @@ class TestMergeSpeakerSegments:
         assert merge_speaker_segments([]) == []
 
     def test_single(self):
-        seg = SpeakerSegment("A", 0.0, 2.0)
+        seg    = SpeakerSegment("A", 0.0, 2.0)
         merged = merge_speaker_segments([seg])
         assert len(merged) == 1
         assert merged[0].start == 0.0
-        assert merged[0].end == 2.0
+        assert merged[0].end   == 2.0
 
     def test_merge_same_speaker(self):
         segs = [
@@ -200,9 +129,8 @@ class TestMergeSpeakerSegments:
             SpeakerSegment("B", 1.0, 2.0),
             SpeakerSegment("A", 2.0, 3.0),
         ]
-        merged = merge_speaker_segments(segs)
         # A-B-A → three segments (A is not re-merged across B)
-        assert len(merged) == 3
+        assert len(merge_speaker_segments(segs)) == 3
 
 
 # ── extract_speech_audio ──────────────────────────────────────────────────────
@@ -213,8 +141,7 @@ class TestExtractSpeechAudio:
 
     def test_extracts_specified_segments(self, tmp_wav):
         with patch("torchaudio.load", side_effect=self._fake_load):
-            segments = [(0.0, 1.0)]  # first 1 second
-            result = extract_speech_audio(tmp_wav, segments)
+            result = extract_speech_audio(tmp_wav, [(0.0, 1.0)])
             assert result.shape == (1, 16000)
 
     def test_falls_back_to_full_audio_when_no_segments(self, tmp_wav):
@@ -224,54 +151,53 @@ class TestExtractSpeechAudio:
 
     def test_concatenates_multiple_segments(self, tmp_wav):
         with patch("torchaudio.load", side_effect=self._fake_load):
-            segments = [(0.0, 0.5), (1.0, 1.5)]   # 0.5s + 0.5s = 1s total
-            result = extract_speech_audio(tmp_wav, segments)
-            assert result.shape == (1, 16000)   # 1s × 16000 = 16000 samples
+            result = extract_speech_audio(tmp_wav, [(0.0, 0.5), (1.0, 1.5)])
+            assert result.shape == (1, 16000)   # 0.5s + 0.5s = 1s × 16000
 
 
 # ── VazamPipeline ─────────────────────────────────────────────────────────────
 
 class TestVazamPipeline:
-    def _make_pipeline(self, embeddings: dict[int, np.ndarray]) -> VazamPipeline:
-        """Build a pipeline with a pre-loaded index and mocked embed_file."""
-        p = VazamPipeline(hf_token="", use_vad=False, use_diarization=False)
-        entries = [
-            (actor_id, f"Actor {actor_id}", "Natural Voice", emb)
-            for actor_id, emb in embeddings.items()
-        ]
-        p.load_index(entries)
-        return p
+
+    def _make_pipeline(self, search_results: list[dict]) -> VazamPipeline:
+        """Build a pipeline with a mocked db.search_embeddings."""
+        mock_db = MagicMock()
+        mock_db.search_embeddings.return_value = search_results
+        return VazamPipeline(db=mock_db, hf_token="", use_vad=False, use_diarization=False)
 
     def test_identify_returns_correct_actor(self, tmp_wav):
-        target_emb = _rand_emb(0)
-        p = self._make_pipeline({1: target_emb, 2: _rand_emb(1)})
+        rows = _make_db_rows("Steve Blum")
+        p    = self._make_pipeline(rows)
 
-        with patch.object(p, "embed_file", return_value=target_emb):
-            results = p.identify(tmp_wav, top_k=2)
+        with patch.object(p, "embed_file", return_value=_rand_emb(0)):
+            results = p.identify(tmp_wav, top_k=1)
 
-        assert results[0].actor_id == 1
-        assert results[0].confidence > 0.99
+        assert len(results) == 1
+        assert results[0].actor_name  == "Steve Blum"
+        assert results[0].confidence  == pytest.approx(0.95)
 
-    def test_identify_with_actor_id_filter(self, tmp_wav):
-        target_emb = _rand_emb(0)
-        p = self._make_pipeline({1: target_emb, 2: _rand_emb(1)})
-
-        with patch.object(p, "embed_file", return_value=target_emb):
-            # Restrict to actor_id=2 only — actor 1 should be excluded
-            results = p.identify(tmp_wav, actor_ids=[2])
-
-        assert all(r.actor_id == 2 for r in results)
-
-    def test_identify_empty_index_returns_empty(self, tmp_wav):
-        p = VazamPipeline(hf_token="", use_vad=False, use_diarization=False)
+    def test_identify_empty_returns_empty(self, tmp_wav):
+        p = self._make_pipeline([])
         with patch.object(p, "embed_file", return_value=_rand_emb(0)):
             results = p.identify(tmp_wav)
         assert results == []
 
+    def test_identify_passes_show_id_to_db(self, tmp_wav):
+        mock_db = MagicMock()
+        mock_db.search_embeddings.return_value = []
+        p = VazamPipeline(db=mock_db, hf_token="", use_vad=False, use_diarization=False)
+
+        with patch.object(p, "embed_file", return_value=_rand_emb(0)):
+            p.identify(tmp_wav, show_id=42)
+
+        mock_db.search_embeddings.assert_called_once()
+        _, kwargs = mock_db.search_embeddings.call_args
+        assert kwargs.get("show_id") == 42
+
     def test_identify_multi_falls_back_to_single(self, tmp_wav):
-        """Without a HF_TOKEN, identify_multi should use single-speaker path."""
-        target_emb = _rand_emb(0)
-        p = self._make_pipeline({1: target_emb})
+        """Without HF_TOKEN, identify_multi uses the single-speaker path."""
+        rows = _make_db_rows("Actor 1")
+        p    = self._make_pipeline(rows)
 
         with patch.object(p, "identify", return_value=[
             IdentificationResult(1, "Actor 1", "Natural Voice", 0.95)
@@ -281,8 +207,13 @@ class TestVazamPipeline:
         assert "SPEAKER_00" in result
         mock_identify.assert_called_once()
 
-    def test_add_entry_increments_index(self):
-        p = VazamPipeline(hf_token="", use_vad=False, use_diarization=False)
-        assert p.index.size == 0
-        p.add_entry(1, "Actor", "Voice", _rand_emb(0))
-        assert p.index.size == 1
+    def test_identify_result_fields(self, tmp_wav):
+        rows = [{"actor_id": 7, "actor_name": "Tara Strong", "voice_label": "Raven", "similarity": 0.88}]
+        p    = self._make_pipeline(rows)
+
+        with patch.object(p, "embed_file", return_value=_rand_emb(0)):
+            results = p.identify(tmp_wav)
+
+        assert results[0].actor_id      == 7
+        assert results[0].character_name == "Raven"
+        assert results[0].confidence    == pytest.approx(0.88)

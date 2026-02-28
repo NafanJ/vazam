@@ -6,23 +6,23 @@ Stages:
   2. VAD              — pyannote voice-activity-detection
   3. Diarization      — pyannote speaker-diarization-3.1
   4. Embedding        — SpeechBrain ECAPA-TDNN (192-dim, cosine)
-  5. Search           — FAISS IndexFlatIP against the embedding store
+  5. Search           — pgvector cosine similarity via Supabase RPC
 """
 
 from __future__ import annotations
 
-import io
 import os
 import subprocess
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
-import faiss
 import torch
 import torchaudio
+
+if TYPE_CHECKING:
+    from db import VazamDB
 
 # ── Optional heavy deps (loaded lazily so the module imports quickly) ────────
 
@@ -290,86 +290,13 @@ def get_embedding_for_segment(
     return get_embedding(chunk, device=device)
 
 
-# ── Stage 5: FAISS vector search ─────────────────────────────────────────────
-
-class EmbeddingIndex:
-    """FAISS IndexFlatIP wrapper for cosine-similarity search.
-
-    Works with L2-normalized 192-dim vectors. Inner product on normalized
-    vectors equals cosine similarity, ranging from -1 (opposite) to 1 (identical).
-    """
-
-    def __init__(self) -> None:
-        self._index: Optional[faiss.IndexFlatIP] = None
-        # Parallel list mapping FAISS ordinal → (actor_id, actor_name, character_name)
-        self._entries: list[tuple[int, str, str]] = []
-
-    def add(self, actor_id: int, actor_name: str, character_name: str, embedding: np.ndarray) -> None:
-        """Add a single L2-normalized embedding to the index."""
-        if self._index is None:
-            self._index = faiss.IndexFlatIP(EMBEDDING_DIM)
-        vec = embedding.reshape(1, -1).astype("float32")
-        self._index.add(vec)
-        self._entries.append((actor_id, actor_name, character_name))
-
-    def build_from_list(
-        self,
-        entries: list[tuple[int, str, str, np.ndarray]],
-    ) -> None:
-        """Bulk-build the index from (actor_id, actor_name, character_name, embedding) tuples."""
-        self._index = faiss.IndexFlatIP(EMBEDDING_DIM)
-        self._entries = []
-        if not entries:
-            return
-        matrix = np.array([e[3] for e in entries], dtype="float32")
-        self._index.add(matrix)
-        self._entries = [(e[0], e[1], e[2]) for e in entries]
-
-    def search(self, query: np.ndarray, top_k: int = 5) -> list[IdentificationResult]:
-        """Return the top-k most similar voice actors for a query embedding."""
-        if self._index is None or self._index.ntotal == 0:
-            return []
-
-        q = query.reshape(1, -1).astype("float32")
-        sims, idxs = self._index.search(q, min(top_k, self._index.ntotal))
-
-        results: list[IdentificationResult] = []
-        for sim, idx in zip(sims[0], idxs[0]):
-            if idx == -1:
-                continue
-            actor_id, actor_name, character_name = self._entries[idx]
-            results.append(IdentificationResult(
-                actor_id=actor_id,
-                actor_name=actor_name,
-                character_name=character_name,
-                confidence=float(sim),
-            ))
-
-        return results
-
-    def save(self, path: str) -> None:
-        """Persist the FAISS index to disk."""
-        if self._index is not None:
-            faiss.write_index(self._index, path)
-
-    def load(self, path: str, entries: list[tuple[int, str, str]]) -> None:
-        """Load a persisted FAISS index and restore its entry list."""
-        self._index = faiss.read_index(path)
-        self._entries = entries
-
-    @property
-    def size(self) -> int:
-        return 0 if self._index is None else self._index.ntotal
-
-
-# ── Orchestrator ─────────────────────────────────────────────────────────────
+# ── Stage 5: Orchestrator ────────────────────────────────────────────────────
 
 class VazamPipeline:
     """End-to-end voice actor identification pipeline.
 
     Usage:
-        pipeline = VazamPipeline(hf_token="hf_...", device="cuda")
-        pipeline.load_index(entries)
+        pipeline = VazamPipeline(db=db, hf_token="hf_...", device="cuda")
 
         # Single-speaker clean audio
         results = pipeline.identify(audio_path)
@@ -380,27 +307,17 @@ class VazamPipeline:
 
     def __init__(
         self,
+        db: VazamDB,
         hf_token: str = "",
         device: str | None = None,
         use_vad: bool = True,
         use_diarization: bool = True,
     ) -> None:
+        self.db = db
         self.hf_token = hf_token
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.use_vad = use_vad and bool(hf_token)
         self.use_diarization = use_diarization and bool(hf_token)
-        self.index = EmbeddingIndex()
-
-    # ------------------------------------------------------------------
-    # Index management
-    # ------------------------------------------------------------------
-
-    def load_index(self, entries: list[tuple[int, str, str, np.ndarray]]) -> None:
-        """Build the search index from a list of (actor_id, actor_name, character_name, embedding)."""
-        self.index.build_from_list(entries)
-
-    def add_entry(self, actor_id: int, actor_name: str, character_name: str, embedding: np.ndarray) -> None:
-        self.index.add(actor_id, actor_name, character_name, embedding)
 
     # ------------------------------------------------------------------
     # Embedding helpers
@@ -433,7 +350,7 @@ class VazamPipeline:
         audio_path: str,
         top_k: int = 5,
         isolate: bool = False,
-        actor_ids: Optional[list[int]] = None,
+        show_id: Optional[int] = None,
     ) -> list[IdentificationResult]:
         """Identify the dominant voice actor in an audio clip.
 
@@ -441,17 +358,20 @@ class VazamPipeline:
             audio_path: Path to audio file.
             top_k:      Number of candidates to return.
             isolate:    Run Demucs vocal isolation first.
-            actor_ids:  If provided, restrict search to these actor IDs
+            show_id:    If provided, restrict search to actors in this show
                         (show-aware search — dramatically improves accuracy).
         """
         embedding = self.embed_file(audio_path, isolate=isolate)
-        results = self.index.search(embedding, top_k=top_k)
-
-        if actor_ids is not None:
-            actor_id_set = set(actor_ids)
-            results = [r for r in results if r.actor_id in actor_id_set]
-
-        return results
+        rows = self.db.search_embeddings(embedding, top_k=top_k, show_id=show_id)
+        return [
+            IdentificationResult(
+                actor_id=row["actor_id"],
+                actor_name=row["actor_name"],
+                character_name=row["voice_label"],
+                confidence=float(row["similarity"]),
+            )
+            for row in rows
+        ]
 
     # ------------------------------------------------------------------
     # Multi-speaker identification
@@ -485,7 +405,16 @@ class VazamPipeline:
                         emb = get_embedding_for_segment(
                             path, seg.start, seg.end, device=self.device
                         )
-                        per_speaker[seg.speaker_label] = self.index.search(emb, top_k=top_k)
+                        rows = self.db.search_embeddings(emb, top_k=top_k)
+                        per_speaker[seg.speaker_label] = [
+                            IdentificationResult(
+                                actor_id=row["actor_id"],
+                                actor_name=row["actor_name"],
+                                character_name=row["voice_label"],
+                                confidence=float(row["similarity"]),
+                            )
+                            for row in rows
+                        ]
                     return per_speaker
             except Exception:
                 pass  # fall through to single-speaker

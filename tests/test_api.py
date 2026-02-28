@@ -2,7 +2,7 @@
 test_api.py — integration tests for the FastAPI endpoints (api.py)
 
 Uses the api_client fixture from conftest.py, which mocks all ML dependencies
-and spins up a TestClient backed by a fresh temp SQLite database.
+and Supabase via an in-memory fake client.
 """
 
 from __future__ import annotations
