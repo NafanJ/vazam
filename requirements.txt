@@ -28,6 +28,7 @@ faiss-cpu>=1.7.4            # swap for faiss-gpu on GPU instances
 # ── Numerical / data ─────────────────────────────────────────────────────────
 numpy>=1.24.0
 requests>=2.31.0            # AniList seeder HTTP calls
+python-dotenv>=1.0.0        # load .env into os.environ
 
 # ── Dev / testing (optional) ─────────────────────────────────────────────────
 # pytest>=8.0.0
