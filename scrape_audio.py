@@ -49,40 +49,46 @@ load_dotenv()
 
 DEFAULT_LIMIT = 50
 SCRAPE_DELAY  = 2.5   # seconds between downloads (be polite)
-MAX_DURATION  = 600   # skip videos longer than 10 minutes
+MAX_DURATION  = 3600  # skip videos longer than 1 hour (interviews can be 30–60 min)
 
 
 # ── YouTube download ──────────────────────────────────────────────────────────
 
-def _search_and_download(query: str, output_path: str) -> Optional[str]:
-    """Search YouTube for `query`, download the first result as MP3.
+def _search_and_download(query: str, output_dir: str) -> Optional[str]:
+    """Search YouTube for `query`, download the first matching result as MP3.
 
-    Returns the path to the downloaded file, or None on failure.
-    Uses yt-dlp's ytsearch1: prefix which returns a single result.
+    Tries up to 5 search results so that the duration filter has candidates to
+    fall back on when the top result is too long.  Returns the path to the
+    downloaded .mp3, or None on failure.
     """
+    out_tmpl = os.path.join(output_dir, "audio.%(ext)s")
     cmd = [
         "yt-dlp",
-        f"ytsearch1:{query}",
+        f"ytsearch5:{query}",            # try up to 5 results — gives filter room to breathe
         "--extract-audio",
         "--audio-format", "mp3",
         "--audio-quality", "5",          # ~128 kbps — enough for speaker ID
         "--match-filter", f"duration < {MAX_DURATION}",
-        "--output", output_path,
+        "--output", out_tmpl,
         "--no-playlist",
         "--quiet",
         "--no-warnings",
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, timeout=120)
-        if result.returncode == 0 and Path(output_path).exists():
-            return output_path
-        # yt-dlp appends the extension automatically — check for .mp3
-        mp3_path = output_path if output_path.endswith(".mp3") else output_path + ".mp3"
-        if Path(mp3_path).exists():
-            return mp3_path
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-    return None
+        subprocess.run(cmd, capture_output=True, timeout=180, check=False)
+    except FileNotFoundError:
+        print(
+            "  ✗ yt-dlp not found — install it with: pip install yt-dlp",
+            file=sys.stderr,
+        )
+        return None
+    except subprocess.TimeoutExpired:
+        return None
+
+    # After --extract-audio --audio-format mp3, yt-dlp resolves %(ext)s → mp3
+    # so the actual output file is always <output_dir>/audio.mp3.
+    mp3_path = os.path.join(output_dir, "audio.mp3")
+    return mp3_path if Path(mp3_path).exists() else None
 
 
 def _build_query(actor_name: str, character_name: Optional[str] = None, show_title: Optional[str] = None) -> str:
@@ -181,13 +187,7 @@ def scrape_actors(
                 continue
 
             with tempfile.TemporaryDirectory() as tmpdir:
-                out_tmpl = os.path.join(tmpdir, "audio.%(ext)s")
-                downloaded = _search_and_download(query, out_tmpl)
-
-                if not downloaded:
-                    # yt-dlp writes <audio.mp3> even when template is <audio.%(ext)s>
-                    candidate = os.path.join(tmpdir, "audio.mp3")
-                    downloaded = candidate if Path(candidate).exists() else None
+                downloaded = _search_and_download(query, tmpdir)
 
                 if not downloaded:
                     print(f"  ✗ download failed")
