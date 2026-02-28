@@ -1,16 +1,13 @@
 """
-seed.py — Seed the Vazam metadata database from AniList
+seed.py — Seed the Vazam Supabase database from AniList
 
 AniList offers a free public GraphQL API (no auth needed for reads).
 This script fetches popular anime titles, their characters, and voice actor
-credits, then writes everything into the local SQLite database and/or a
-Supabase project.
+credits, then upserts everything into Supabase.
 
 Usage
 -----
-    python seed.py                          # seed top 200 anime (English VAs) → SQLite
-    python seed.py --target supabase        # seed to Supabase only
-    python seed.py --target both            # seed to SQLite and Supabase simultaneously
+    python seed.py                          # seed top 200 anime (English VAs)
     python seed.py --lang JAPANESE          # Japanese seiyuu
     python seed.py --limit 50 --delay 1    # smaller batch, slower rate
     python seed.py --show "Cowboy Bebop"   # single show by title
@@ -38,8 +35,6 @@ import time
 from typing import Optional
 
 import requests
-
-from db import VazamDB
 
 # ── AniList GraphQL ──────────────────────────────────────────────────────────
 
@@ -214,69 +209,9 @@ class SupabaseDB:
         self._session.close()
 
 
-# ── Multi-backend fan-out ─────────────────────────────────────────────────────
-
-class _MultiDB:
-    """Fan-out writes to both SQLite and Supabase simultaneously.
-
-    The seeding functions receive IDs from the primary (SQLite) backend.
-    This class maintains a mapping so that add_character can supply the
-    correct Supabase IDs to the secondary backend.
-    """
-
-    def __init__(self, primary: VazamDB, secondary: SupabaseDB) -> None:
-        self._primary = primary
-        self._secondary = secondary
-        self._actor_id_map: dict[int, int] = {}
-        self._show_id_map: dict[int, int] = {}
-
-    def add_actor(
-        self,
-        name: str,
-        bio: str = "",
-        image_url: str = "",
-        anilist_id: Optional[int] = None,
-    ) -> int:
-        pid = self._primary.add_actor(name=name, bio=bio, image_url=image_url, anilist_id=anilist_id)
-        sid = self._secondary.add_actor(name=name, bio=bio, image_url=image_url, anilist_id=anilist_id)
-        self._actor_id_map[pid] = sid
-        return pid
-
-    def add_show(
-        self,
-        title: str,
-        media_type: str = "anime",
-        year: Optional[int] = None,
-        anilist_id: Optional[int] = None,
-        image_url: str = "",
-    ) -> int:
-        pid = self._primary.add_show(title=title, media_type=media_type, year=year, anilist_id=anilist_id, image_url=image_url)
-        sid = self._secondary.add_show(title=title, media_type=media_type, year=year, anilist_id=anilist_id, image_url=image_url)
-        self._show_id_map[pid] = sid
-        return pid
-
-    def add_character(
-        self,
-        name: str,
-        show_id: Optional[int],
-        actor_id: int,
-        image_url: str = "",
-        anilist_id: Optional[int] = None,
-    ) -> int:
-        pid = self._primary.add_character(name=name, show_id=show_id, actor_id=actor_id, image_url=image_url, anilist_id=anilist_id)
-        sec_show_id = self._show_id_map.get(show_id) if show_id is not None else None
-        sec_actor_id = self._actor_id_map.get(actor_id)
-        self._secondary.add_character(name=name, show_id=sec_show_id, actor_id=sec_actor_id, image_url=image_url, anilist_id=anilist_id)
-        return pid
-
-    def close(self) -> None:
-        self._primary.close()
-        self._secondary.close()
-
-
 # ── Seeding logic ─────────────────────────────────────────────────────────────
 
-def seed_show(db: VazamDB | SupabaseDB | _MultiDB, media_id: int, lang: str = "ENGLISH", delay: float = DEFAULT_DELAY) -> int:
+def seed_show(db: SupabaseDB, media_id: int, lang: str = "ENGLISH", delay: float = DEFAULT_DELAY) -> int:
     """Fetch all character→VA mappings for one AniList media ID and store them.
 
     Returns the number of (character, VA) pairs inserted.
@@ -337,7 +272,7 @@ def seed_show(db: VazamDB | SupabaseDB | _MultiDB, media_id: int, lang: str = "E
     return inserted
 
 
-def seed_popular(db: VazamDB | SupabaseDB | _MultiDB, limit: int = 200, lang: str = "ENGLISH", delay: float = DEFAULT_DELAY) -> None:
+def seed_popular(db: SupabaseDB, limit: int = 200, lang: str = "ENGLISH", delay: float = DEFAULT_DELAY) -> None:
     """Seed the database with the top-N most popular anime on AniList."""
     per_page = 50
     total_pages = (limit + per_page - 1) // per_page
@@ -367,7 +302,7 @@ def seed_popular(db: VazamDB | SupabaseDB | _MultiDB, limit: int = 200, lang: st
         time.sleep(delay)
 
 
-def seed_by_title(db: VazamDB | SupabaseDB | _MultiDB, title: str, lang: str = "ENGLISH", delay: float = DEFAULT_DELAY) -> None:
+def seed_by_title(db: SupabaseDB, title: str, lang: str = "ENGLISH", delay: float = DEFAULT_DELAY) -> None:
     """Seed a single show looked up by title."""
     print(f"Searching AniList for: {title!r}")
     data = _gql(SEARCH_MEDIA_QUERY, {"search": title})
@@ -380,59 +315,30 @@ def seed_by_title(db: VazamDB | SupabaseDB | _MultiDB, title: str, lang: str = "
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-def _build_db(args: argparse.Namespace) -> VazamDB | SupabaseDB | _MultiDB:
-    """Construct the appropriate DB backend(s) based on --target."""
-    needs_supabase = args.target in ("supabase", "both")
-    needs_sqlite   = args.target in ("sqlite",   "both")
-
-    supa: Optional[SupabaseDB] = None
-    if needs_supabase:
-        url = args.supabase_url or os.environ.get("SUPABASE_URL", "")
-        key = args.supabase_key or os.environ.get("SUPABASE_KEY", "")
-        if not url or not key:
-            raise SystemExit(
-                "Supabase target requires SUPABASE_URL and SUPABASE_KEY "
-                "(env vars or --supabase-url / --supabase-key)."
-            )
-        supa = SupabaseDB(url, key)
-        print(f"Supabase target: {url}")
-
-    if needs_sqlite and needs_supabase:
-        sqlite_db = VazamDB(args.db)
-        print(f"SQLite target:   {args.db}")
-        return _MultiDB(sqlite_db, supa)
-
-    if needs_supabase:
-        return supa
-
-    # sqlite only (default)
-    print(f"SQLite target: {args.db}")
-    return VazamDB(args.db)
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Seed Vazam DB from AniList")
+    parser = argparse.ArgumentParser(description="Seed Vazam Supabase DB from AniList")
     parser.add_argument("--show",  type=str,   default="",      help="Seed a single show by title")
     parser.add_argument("--limit", type=int,   default=200,     help="Number of popular shows to seed")
     parser.add_argument("--lang",  type=str,   default="ENGLISH", choices=["ENGLISH", "JAPANESE"],
                         help="Voice actor language")
     parser.add_argument("--delay", type=float, default=DEFAULT_DELAY,
                         help="Seconds to sleep between API requests")
-    parser.add_argument("--db",    type=str,   default="vazam.db", help="Path to SQLite database")
-    parser.add_argument(
-        "--target",
-        type=str,
-        default="sqlite",
-        choices=["sqlite", "supabase", "both"],
-        help="Where to write: sqlite (default), supabase, or both",
-    )
     parser.add_argument("--supabase-url", type=str, default="",
                         help="Supabase project URL (overrides SUPABASE_URL env var)")
     parser.add_argument("--supabase-key", type=str, default="",
                         help="Supabase service-role key (overrides SUPABASE_KEY env var)")
     args = parser.parse_args()
 
-    db = _build_db(args)
+    url = args.supabase_url or os.environ.get("SUPABASE_URL", "")
+    key = args.supabase_key or os.environ.get("SUPABASE_KEY", "")
+    if not url or not key:
+        raise SystemExit(
+            "SUPABASE_URL and SUPABASE_KEY are required "
+            "(env vars or --supabase-url / --supabase-key)."
+        )
+
+    db = SupabaseDB(url, key)
+    print(f"Supabase target: {url}")
 
     try:
         if args.show:
@@ -443,9 +349,6 @@ def main() -> None:
         db.close()
 
     print("\nSeeding complete.")
-    if args.target in ("sqlite", "both"):
-        print("  Rebuild the FAISS index: POST /index/rebuild")
-        print("  Or restart the API server (index rebuilds automatically at startup).")
 
 
 if __name__ == "__main__":
