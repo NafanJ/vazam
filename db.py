@@ -142,13 +142,17 @@ class VazamDB:
                 """,
                 (name, bio, image_url, anilist_id),
             )
-            if cur.lastrowid:
-                return cur.lastrowid
-            # Row existed — fetch its id
-            row = self._conn.execute(
-                "SELECT id FROM actors WHERE anilist_id = ?", (anilist_id,)
-            ).fetchone()
-            return row["id"]
+            # When the upsert resolves via DO UPDATE, cursor.lastrowid is
+            # unreliable on older SQLite (pre-3.35): sqlite3_last_insert_rowid()
+            # is not updated and retains the rowid of whatever was last INSERTed
+            # on this connection (possibly a characters row). Always SELECT by
+            # anilist_id when it is set to get the authoritative id.
+            if anilist_id is not None:
+                row = self._conn.execute(
+                    "SELECT id FROM actors WHERE anilist_id = ?", (anilist_id,)
+                ).fetchone()
+                return row["id"]
+            return cur.lastrowid
 
     def get_actor(self, actor_id: int) -> Optional[sqlite3.Row]:
         return self._conn.execute(
@@ -213,12 +217,12 @@ class VazamDB:
                 """,
                 (title, media_type, year, anilist_id, image_url),
             )
-            if cur.lastrowid:
-                return cur.lastrowid
-            row = self._conn.execute(
-                "SELECT id FROM shows WHERE anilist_id = ?", (anilist_id,)
-            ).fetchone()
-            return row["id"]
+            if anilist_id is not None:
+                row = self._conn.execute(
+                    "SELECT id FROM shows WHERE anilist_id = ?", (anilist_id,)
+                ).fetchone()
+                return row["id"]
+            return cur.lastrowid
 
     def get_show(self, show_id: int) -> Optional[sqlite3.Row]:
         return self._conn.execute(
@@ -261,12 +265,12 @@ class VazamDB:
                 """,
                 (name, show_id, actor_id, image_url, anilist_id),
             )
-            if cur.lastrowid:
-                return cur.lastrowid
-            row = self._conn.execute(
-                "SELECT id FROM characters WHERE anilist_id = ?", (anilist_id,)
-            ).fetchone()
-            return row["id"]
+            if anilist_id is not None:
+                row = self._conn.execute(
+                    "SELECT id FROM characters WHERE anilist_id = ?", (anilist_id,)
+                ).fetchone()
+                return row["id"]
+            return cur.lastrowid
 
     # ------------------------------------------------------------------
     # Embeddings

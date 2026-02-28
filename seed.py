@@ -104,16 +104,23 @@ query SearchMedia($search: String) {
 
 
 def _gql(query: str, variables: dict | None = None) -> dict:
-    resp = requests.post(
-        ANILIST_URL,
-        json={"query": query, "variables": variables or {}},
-        timeout=15,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    if "errors" in data:
-        raise RuntimeError(f"AniList error: {data['errors']}")
-    return data["data"]
+    delay = 2.0
+    for attempt in range(5):
+        resp = requests.post(
+            ANILIST_URL,
+            json={"query": query, "variables": variables or {}},
+            timeout=15,
+        )
+        if resp.status_code == 429 and attempt < 4:
+            time.sleep(delay)
+            delay *= 2
+            continue
+        resp.raise_for_status()
+        data = resp.json()
+        if "errors" in data:
+            raise RuntimeError(f"AniList error: {data['errors']}")
+        return data["data"]
+    raise RuntimeError("AniList rate limit: max retries exceeded")
 
 
 # ── Supabase backend ──────────────────────────────────────────────────────────
