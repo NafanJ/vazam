@@ -6,8 +6,8 @@ Vazam is "Shazam for Voice Actors": point a phone at any animated show, anime, o
 
 **Version:** 0.2.0
 **Stack:** Python 3 (FastAPI backend) + TypeScript/React Native (mobile frontend)
-**Database:** SQLite (upgradeable to PostgreSQL)
-**Vector search:** FAISS IndexFlatIP (cosine similarity)
+**Database:** Supabase (PostgreSQL + pgvector)
+**Vector search:** pgvector `vector(192)` with cosine similarity via `match_embeddings` RPC
 
 ## Architecture
 
@@ -19,8 +19,8 @@ Audio clip
   → pyannote VAD             (trim silence, keep only speech)
   → pyannote diarization-3.1 (split multi-speaker clips per speaker)
   → SpeechBrain ECAPA-TDNN  (192-dim speaker embedding)
-  → FAISS IndexFlatIP        (cosine similarity search)
-  → SQLite                   (actor → character → show metadata lookup)
+  → Supabase match_embeddings RPC  (pgvector cosine similarity search)
+  → Supabase vazam_actors/characters/shows  (metadata lookup)
   → "Steve Blum as Spike Spiegel (Cowboy Bebop) — 94% confidence"
 ```
 
@@ -30,18 +30,19 @@ Audio clip
 vazam/
 ├── api.py             FastAPI HTTP backend (main entry point for the server)
 ├── pipeline.py        Full pipeline: isolation → VAD → diarize → embed → search
-├── db.py              SQLite wrapper: actors, shows, characters, embeddings tables
-├── seed.py            AniList GraphQL seeder (metadata only, no audio)
+├── db.py              Supabase wrapper: vazam_actors, vazam_shows, vazam_characters, vazam_embeddings tables
+├── seed.py            AniList GraphQL seeder → Supabase (metadata only, no audio)
+├── scrape_audio.py    Automated YouTube audio downloader + embedder via yt-dlp
 ├── embed_batch.py     Bulk audio-to-embedding importer (CLI tool)
 ├── main.py            Standalone demo script (single-file quick test)
 ├── requirements.txt   Python dependencies
 ├── *.mp3 / *.wav      Test audio samples
 ├── tests/
 │   ├── __init__.py
-│   ├── conftest.py    Shared fixtures; mocks all ML dependencies
+│   ├── conftest.py    Shared fixtures; mocks all ML deps + Supabase with in-memory fakes
 │   ├── test_api.py    FastAPI endpoint integration tests
 │   ├── test_db.py     Database CRUD and embedding serialization tests
-│   └── test_pipeline.py  Pipeline logic and FAISS index tests
+│   └── test_pipeline.py  Pipeline logic tests
 └── app/               React Native mobile application
     ├── package.json
     ├── App.tsx         Root navigator
@@ -55,13 +56,14 @@ vazam/
 
 ## Environment Variables
 
-| Variable   | Default    | Description                                                         |
-|------------|------------|---------------------------------------------------------------------|
-| `HF_TOKEN` | _(empty)_  | HuggingFace token — required for VAD + diarization (pyannote models). Accept terms at `hf.co/pyannote/voice-activity-detection` and `hf.co/pyannote/speaker-diarization-3.1` |
-| `DB_PATH`  | `vazam.db` | SQLite database file path                                           |
-| `DEVICE`   | auto       | `cuda` or `cpu` — if unset, auto-detects CUDA                      |
+| Variable        | Default    | Description                                                                          |
+|-----------------|------------|--------------------------------------------------------------------------------------|
+| `SUPABASE_URL`  | _(required)_ | Supabase project URL, e.g. `https://<ref>.supabase.co`                             |
+| `SUPABASE_KEY`  | _(required)_ | Supabase service-role key (needed for writes)                                       |
+| `HF_TOKEN`      | _(empty)_  | HuggingFace token — required for VAD + diarization (pyannote models). Accept terms at `hf.co/pyannote/voice-activity-detection` and `hf.co/pyannote/speaker-diarization-3.1` |
+| `DEVICE`        | auto       | `cuda` or `cpu` — if unset, auto-detects CUDA                                       |
 
-Without `HF_TOKEN`, VAD and diarization are disabled. The pipeline falls back to embedding the full audio file and single-speaker identification still works.
+`python-dotenv` is installed; place credentials in a `.env` file at the project root and they are loaded automatically on startup. Without `HF_TOKEN`, VAD and diarization are disabled — the pipeline falls back to embedding the full audio file and single-speaker identification still works.
 
 ## Development Setup
 
@@ -73,8 +75,12 @@ pip install -r requirements.txt
 # Optional: install test dependencies (commented out in requirements.txt)
 pip install pytest httpx
 
-# Set HuggingFace token if you want VAD + diarization
-export HF_TOKEN=hf_...
+# Create a .env file with your credentials
+cat > .env <<EOF
+SUPABASE_URL=https://<ref>.supabase.co
+SUPABASE_KEY=<service_role_key>
+HF_TOKEN=hf_...   # optional
+EOF
 
 # Run the API server
 uvicorn api:app --reload
@@ -99,7 +105,7 @@ npm run start
 
 ## Running Tests
 
-Tests mock all heavy ML dependencies (SpeechBrain, Demucs, pyannote) so they run without GPU or model downloads.
+Tests mock all heavy ML dependencies (SpeechBrain, Demucs, pyannote) **and** replace the Supabase client with an in-memory fake (`_FakeSupabase` in `conftest.py`), so they run without GPU, model downloads, or a real Supabase project.
 
 ```bash
 # Run all tests
@@ -127,8 +133,9 @@ npm run lint   # ESLint on src/**/*.{ts,tsx}
 - Entry point: `uvicorn api:app --reload`
 - Global state: `db: VazamDB` and `pipeline: VazamPipeline` initialized in the `lifespan` context manager
 - CORS is open (`allow_origins=["*"]`) — restrict in production
-- FAISS index is rebuilt from the DB automatically on startup via `_rebuild_index()`
-- Adding an embedding via `POST /actors/{id}/embeddings` incrementally updates the live in-memory index without requiring a full rebuild
+- No FAISS rebuild on startup; pgvector's HNSW index is managed automatically by Supabase
+- `POST /index/rebuild` is kept for backward compatibility but is a **no-op** — it just returns the current embedding count
+- Adding an embedding via `POST /actors/{id}/embeddings` calls `db.add_embedding()` which inserts into Supabase; the pgvector index updates automatically
 
 ### `pipeline.py` — Audio Processing
 
@@ -136,11 +143,12 @@ Key classes and functions:
 
 | Symbol | Description |
 |--------|-------------|
-| `VazamPipeline` | Orchestrator — holds FAISS index, calls isolation/VAD/diarize/embed |
-| `EmbeddingIndex` | Thin FAISS `IndexFlatIP` wrapper; stores `(actor_id, actor_name, character_name)` in a parallel list |
+| `VazamPipeline` | Orchestrator — calls isolation/VAD/diarize/embed and delegates search to `db.search_embeddings()` |
 | `isolate_vocals()` | Runs Demucs via subprocess; falls back to original file on failure |
 | `get_speech_segments()` | Returns `[(start, end)]` tuples of speech from pyannote VAD |
+| `extract_speech_audio()` | Loads audio and concatenates VAD-selected segments into a single `(1, N)` tensor |
 | `get_embedding()` | Accepts a file path or a `(1, N)` tensor; returns a 192-dim L2-normalized `float32` array |
+| `get_embedding_for_segment()` | Generates an embedding for a time-bounded slice of an audio file |
 | `diarize()` | Returns `list[SpeakerSegment]` from pyannote speaker-diarization-3.1 |
 | `merge_speaker_segments()` | Merges consecutive same-speaker segments for better embedding quality |
 
@@ -155,38 +163,62 @@ MIN_SPEECH_SECONDS  = 1.5    # segments shorter than this are dropped
 
 Heavy models are module-level globals (`_classifier`, `_vad_pipeline`, `_diarize_pipeline`) loaded lazily on first call so the module imports quickly.
 
-### `db.py` — SQLite Database
+**torchaudio compatibility shim:** `pipeline.py` patches `torchaudio.list_audio_backends` to an empty lambda at import time, because torchaudio ≥ 2.5 removed that function from the public namespace but older SpeechBrain releases call it.
 
-Schema:
+### `db.py` — Supabase Database
+
+Connects to Supabase via the `supabase-py` client (`create_client`). All credentials are read from `SUPABASE_URL` / `SUPABASE_KEY` env vars.
+
+Schema (Supabase tables):
 
 ```
-actors      — id, name, bio, image_url, anilist_id (UNIQUE)
-shows       — id, title, media_type, year, anilist_id (UNIQUE)
-              media_type ∈ {anime, cartoon, game, other}
-characters  — id, name, show_id → shows, actor_id → actors, anilist_id (UNIQUE)
-embeddings  — id, actor_id → actors, character_id → characters,
-              voice_label (default "Natural Voice"), embedding_blob (BLOB),
-              audio_source, verified (0/1), faiss_id
+vazam_actors      — id, name, bio, image_url, anilist_id (UNIQUE)
+vazam_shows       — id, title, media_type, year, image_url, anilist_id (UNIQUE)
+                    media_type ∈ {anime, cartoon, game, other}
+vazam_characters  — id, name, show_id → vazam_shows, actor_id → vazam_actors,
+                    image_url, anilist_id (UNIQUE)
+vazam_embeddings  — id, actor_id → vazam_actors, character_id → vazam_characters,
+                    voice_label (default "Natural Voice"), embedding vector(192),
+                    audio_source, verified (bool), contributor_id
 ```
 
-Embeddings are stored as raw `float32` bytes using `np.ndarray.tobytes()` / `np.frombuffer(..., dtype="float32")`.
+Embeddings are stored as `vector(192)` using pgvector. Serialization: `embedding.tolist()` on write; pgvector returns a native list on read.
+
+Similarity search is handled by the `match_embeddings()` PostgreSQL function (installed via migration), called via `db._client.rpc("match_embeddings", {...})`. It accepts `query_embedding`, `top_k`, and an optional `show_id_filter` and returns `actor_id`, `actor_name`, `voice_label`, `similarity`.
 
 All `add_actor`, `add_show`, and `add_character` calls are upserts on `anilist_id` — safe to re-run.
 
-`VazamDB` uses WAL journal mode and enforces foreign keys. Transactions are handled via the `_tx()` context manager.
+`VazamDB.close()` is a no-op — supabase-py manages its own connection pool.
 
 ### `seed.py` — AniList Metadata Seeder
 
-Fetches popular anime, characters, and voice actor credits from the free AniList GraphQL API (no auth needed). Inserts/upserts into the local DB. Does **not** download or process audio.
+Fetches popular anime, characters, and voice actor credits from the free AniList GraphQL API (no auth needed). Upserts into Supabase via a standalone `SupabaseDB` class that calls the PostgREST REST API directly. Does **not** download or process audio.
 
 ```bash
 python seed.py                          # top 200 anime, English VAs
 python seed.py --show "Cowboy Bebop"    # single show
 python seed.py --lang JAPANESE          # Japanese seiyuu
 python seed.py --limit 50 --delay 1    # smaller batch, slower rate
+
+# Override credentials without .env
+python seed.py --supabase-url https://... --supabase-key ...
 ```
 
-Rate limit: AniList allows ~90 requests/minute; default delay is 0.7s.
+Rate limit: AniList allows ~90 requests/minute; default delay is 0.7s with exponential backoff on 429 errors.
+
+### `scrape_audio.py` — Automated YouTube Audio Scraper
+
+Queries Supabase for actors with zero embeddings, searches YouTube for interview or demo reel clips using `yt-dlp`, downloads audio, and generates + stores embeddings automatically.
+
+```bash
+python scrape_audio.py                        # process up to 50 actors with no embeddings
+python scrape_audio.py --actor "Steve Blum"   # single actor by name (partial match)
+python scrape_audio.py --limit 20             # cap actors per run
+python scrape_audio.py --dry-run              # preview queries without downloading
+python scrape_audio.py --include-characters   # also scrape per-character clips (slower)
+```
+
+`yt-dlp` must be installed (`pip install yt-dlp`). A 2.5-second delay is applied between downloads. Videos longer than 1 hour are skipped. Up to 5 YouTube search results are tried per query so the duration filter has fallback candidates.
 
 ### `embed_batch.py` — Bulk Audio Importer
 
@@ -223,8 +255,8 @@ Interactive docs at `http://localhost:8000/docs` when the server is running.
 | `POST` | `/shows` | Register a show |
 | `GET`  | `/shows` | List all shows |
 | `GET`  | `/shows/{id}` | Show details + cast list |
-| `GET`  | `/shows/search?q=` | Search shows by title (LIKE match) |
-| `POST` | `/index/rebuild` | Rebuild FAISS index from DB (`strategy=individual|centroid`) |
+| `GET`  | `/shows/search?q=` | Search shows by title (ILIKE match) |
+| `POST` | `/index/rebuild` | No-op (pgvector manages indexes automatically); returns embedding count |
 | `GET`  | `/health` | Liveness check + index stats |
 
 ### `/identify` parameters
@@ -236,23 +268,23 @@ Interactive docs at `http://localhost:8000/docs` when the server is running.
 | `show_id` | `null` | Restrict results to actors in this show (show-aware search) |
 | `top_k` | `5` | Number of candidates to return (1–20) |
 
-### Index rebuild strategies
-
-- `individual` (default): one FAISS entry per stored embedding row — best with 1–2 samples per voice label
-- `centroid`: one entry per `(actor_id, voice_label)` group averaged and re-normalized — recommended once you have ≥ 3 samples per label; reduces index size and improves stability
-
 ## Testing Patterns
 
-### ML mocking in conftest.py
+### ML + Supabase mocking in conftest.py
 
-All heavy dependencies are patched before `api.py` is imported:
+All heavy dependencies **and** the Supabase client are patched before `api.py` is imported:
 
 ```python
 with (
     patch("pipeline.isolate_vocals", side_effect=lambda p, **kw: p),
     patch("pipeline._load_embedding_model", return_value=fake_encoder),
     patch("torchaudio.load", return_value=fake_signal),
-    patch.dict("os.environ", {"DB_PATH": db_path, "HF_TOKEN": ""}),
+    patch("db.create_client", return_value=fake_sb),        # in-memory Supabase
+    patch.dict("os.environ", {
+        "SUPABASE_URL": "http://test",
+        "SUPABASE_KEY": "test",
+        "HF_TOKEN": "",
+    }),
 ):
     import importlib
     import api as api_module
@@ -263,20 +295,30 @@ with (
 
 **Important:** `api_module` must be reloaded after patches are applied so the `lifespan` context manager picks them up. Always use `importlib.reload()` rather than a plain `import`.
 
+### In-memory Supabase fake (`_FakeSupabase`)
+
+`conftest.py` contains a complete in-memory Supabase fake:
+
+- `_FakeStore` — shared dict-of-lists representing tables, with auto-incrementing IDs
+- `_FakeQuery` — chainable query builder supporting `select`, `insert`, `upsert`, `eq`, `ilike`, `order`, `range`, `execute`
+- `_FakeRpcQuery` — handles `.rpc()` calls; handlers are registered via `fake_sb.set_rpc(func_name, handler)`
+- The `api_client` fixture wires a `_match_embeddings` handler to the `match_embeddings` RPC so `/identify` works end-to-end in tests
+
 ### Shared fixtures
 
 | Fixture | Description |
 |---------|-------------|
 | `tmp_wav` | Temporary silent 16 kHz WAV file path |
 | `random_embedding` | Random L2-normalized 192-dim `float32` array (seed=42) |
-| `db` | Fresh `VazamDB` backed by a temp SQLite file, auto-deleted |
-| `api_client` | `TestClient` for `api.py` with all ML mocked |
+| `db` | `VazamDB` backed by an in-memory `_FakeSupabase`; no real network calls |
+| `api_client` | `TestClient` for `api.py` with all ML and Supabase mocked |
 
 ### Writing new tests
 
 - Import `make_wav_bytes()` from `tests.conftest` to create in-memory WAV bytes for file uploads
 - Use `files={"audio": ("test.wav", make_wav_bytes(), "audio/wav")}` in multipart requests
 - Tests do not require `HF_TOKEN` — diarization/VAD are disabled when it is empty
+- Tests do not require `SUPABASE_URL`/`SUPABASE_KEY` — `_FakeSupabase` is used instead
 - Keep ML models mocked; never download real models in tests
 
 ## Code Conventions
@@ -288,8 +330,8 @@ with (
 - Type annotations everywhere; prefer `Optional[X]` for nullable parameters in public APIs
 - Module-level docstrings document the module's purpose, public interface, and usage examples
 - Use `dataclasses` for plain data containers (`SpeakerSegment`, `IdentificationResult`)
-- Database access goes exclusively through `VazamDB` — no raw SQL outside `db.py`
-- All embeddings are `float32` numpy arrays, L2-normalized to unit length
+- Database access goes exclusively through `VazamDB` — no direct Supabase client calls outside `db.py`
+- All embeddings are `float32` numpy arrays, L2-normalized to unit length; serialized via `.tolist()` for pgvector
 - Temporary files from uploads are cleaned up in `finally` blocks (see `_save_upload` in `api.py`)
 - Heavy imports (SpeechBrain, pyannote) are inside functions, not at module top-level, to keep startup fast
 
@@ -308,11 +350,11 @@ Each voice actor stores **separate embeddings per voice style**:
 - **Natural Voice** — from interviews, convention panels, or demo reels
 - **Per-character voices** — one or more clips per distinct character voice
 
-This improves accuracy for actors who substantially alter their voice between roles (e.g., Seth MacFarlane as Peter Griffin vs. Stewie Griffin vs. Quagmire). The `voice_label` field on the `embeddings` table holds the label; "Natural Voice" is the default.
+This improves accuracy for actors who substantially alter their voice between roles (e.g., Seth MacFarlane as Peter Griffin vs. Stewie Griffin vs. Quagmire). The `voice_label` field on the `vazam_embeddings` table holds the label; "Natural Voice" is the default.
 
 ## Show-Aware Search
 
-Pass `show_id` to `POST /identify` to restrict matching to actors known to appear in that show. This converts an open-set speaker recognition problem into a closed-set one, which significantly improves accuracy. The filter is applied post-FAISS-search by intersecting results with `db.get_actor_ids_for_show(show_id)`.
+Pass `show_id` to `POST /identify` to restrict matching to actors known to appear in that show. This converts an open-set speaker recognition problem into a closed-set one, which significantly improves accuracy. The `match_embeddings` RPC accepts an optional `show_id_filter` parameter that pre-filters embeddings by actors in the given show.
 
 ## Common Workflows
 
@@ -333,7 +375,7 @@ curl -X POST http://localhost:8000/actors/1/embeddings \
 # 3. Upload character voice
 curl -X POST http://localhost:8000/actors/1/embeddings \
   -F "audio=@blum_spike.wav" \
-  -F "voice_label=Spike Spiegel"
+  -F "voice_label=Spike Spiegel" \
   -F "isolate=true"
 ```
 
@@ -346,27 +388,38 @@ curl -X POST http://localhost:8000/identify \
   -F "top_k=5"
 ```
 
-### Rebuild FAISS index after bulk import
-
-```bash
-# Use centroid strategy once you have ≥ 3 samples per voice label
-curl -X POST "http://localhost:8000/index/rebuild?strategy=centroid"
-```
-
-### Seed metadata from AniList, then import audio
+### Seed metadata from AniList
 
 ```bash
 python seed.py --show "Cowboy Bebop"
-python embed_batch.py samples/ --isolate --rebuild-index http://localhost:8000
+python seed.py --limit 100            # top 100 popular anime
 ```
 
-## Upgrade Path: SQLite → PostgreSQL
+### Auto-scrape audio from YouTube
 
-`db.py` uses only standard SQL compatible with PostgreSQL. To migrate:
+```bash
+# Scrape natural voice clips for all actors with no embeddings
+python scrape_audio.py
 
-1. Replace `sqlite3.connect(...)` with a `psycopg2` or `asyncpg` connection
-2. Change `?` placeholders to `%s` (psycopg2) or `$1` (asyncpg)
-3. Change `AUTOINCREMENT` → `SERIAL` / `GENERATED ALWAYS AS IDENTITY`
-4. Remove `PRAGMA` statements; configure WAL at the server level
+# Scrape a specific actor + their character clips
+python scrape_audio.py --actor "Steve Blum" --include-characters
 
-FAISS index remains in-memory regardless of the DB backend.
+# Dry run to preview queries
+python scrape_audio.py --dry-run
+```
+
+### Bulk-import local audio files
+
+```bash
+python embed_batch.py samples/ --isolate --verified
+```
+
+## Supabase Setup
+
+The Supabase project requires:
+
+1. The `pgvector` extension enabled (`CREATE EXTENSION IF NOT EXISTS vector;`)
+2. Tables: `vazam_actors`, `vazam_shows`, `vazam_characters`, `vazam_embeddings` (with `embedding vector(192)` column)
+3. The `match_embeddings` SQL function installed via migration — this function performs cosine similarity search using pgvector's `<=>` operator and supports optional show-based filtering
+
+pgvector's HNSW index on the `embedding` column is recommended in production for sub-millisecond search at scale. No manual index rebuild is needed; the index updates automatically on insert.
