@@ -21,6 +21,12 @@ import numpy as np
 import torch
 import torchaudio
 
+# torchaudio >= 2.5 removed list_audio_backends from the public namespace.
+# SpeechBrain calls it at import time; shim it so older SpeechBrain releases
+# don't raise AttributeError on newer torchaudio installs.
+if not hasattr(torchaudio, "list_audio_backends"):
+    torchaudio.list_audio_backends = lambda: []
+
 if TYPE_CHECKING:
     from db import VazamDB
 
