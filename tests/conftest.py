@@ -65,6 +65,7 @@ class _FakeQuery:
         self._payload: Any  = None
         self._on_conflict: str | None = None
         self._eq_filters:    list     = []
+        self._in_filters:    list     = []
         self._ilike_filters: list     = []
         self._order_col: str | None   = None
         self._range: tuple | None     = None
@@ -88,6 +89,10 @@ class _FakeQuery:
 
     def eq(self, col: str, val: Any) -> "_FakeQuery":
         self._eq_filters.append((col, val))
+        return self
+
+    def in_(self, col: str, values: list) -> "_FakeQuery":
+        self._in_filters.append((col, list(values)))
         return self
 
     def ilike(self, col: str, pattern: str) -> "_FakeQuery":
@@ -131,6 +136,8 @@ class _FakeQuery:
         filtered = list(rows)
         for col, val in self._eq_filters:
             filtered = [r for r in filtered if r.get(col) == val]
+        for col, vals in self._in_filters:
+            filtered = [r for r in filtered if r.get(col) in vals]
         for col, pat in self._ilike_filters:
             p        = pat.lower().replace("%", "")
             filtered = [r for r in filtered if p in str(r.get(col, "")).lower()]

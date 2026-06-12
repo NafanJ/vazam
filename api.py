@@ -5,6 +5,7 @@ Endpoints
 ---------
   POST /identify                 — Upload audio → get voice actor(s)
   POST /identify/multi           — Multi-speaker diarization + identification
+  POST /identify/show            — Infer the show from cast co-occurrence, then identify
   POST /actors                   — Create a voice actor record
   GET  /actors                   — List all actors
   GET  /actors/{id}              — Actor profile + filmography
@@ -138,6 +139,19 @@ class MultiIdentifyResponse(BaseModel):
     speakers: dict[str, list[IdentificationMatch]]
 
 
+class InferredShow(BaseModel):
+    show_id: int
+    title: str
+    speakers_matched: int   # distinct speakers with a candidate in this cast
+    speakers_total: int     # distinct speakers detected in the clip
+    score: float
+
+
+class ShowIdentifyResponse(BaseModel):
+    show: Optional[InferredShow]   # None when no cast consensus was found
+    speakers: dict[str, list[IdentificationMatch]]
+
+
 class IndexRebuildResponse(BaseModel):
     embeddings_loaded: int
     message: str
@@ -211,6 +225,44 @@ async def identify_multi(
             speaker: [IdentificationMatch(**r.to_dict()) for r in results]
             for speaker, results in per_speaker.items()
         }
+    )
+
+
+@app.post("/identify/show", response_model=ShowIdentifyResponse, tags=["Identification"])
+async def identify_show(
+    audio: UploadFile = File(..., description="Multi-speaker clip recorded from a playing show"),
+    isolate: bool = Form(True, description="Run Demucs vocal isolation first"),
+    top_k: int = Form(3, ge=1, le=10),
+):
+    """Infer which show is playing from cast co-occurrence, then identify each
+    speaker within that show — the no-input version of show-aware search.
+
+    Diarizes the clip, matches each speaker globally, and votes on shows whose
+    casts explain multiple speakers at once. Requires HF_TOKEN for diarization;
+    without it (or with a single speaker) falls back to global identification
+    with `show: null`.
+    """
+    if db.get_embedding_count() == 0:
+        raise HTTPException(503, "No embeddings in index. Add voice samples first.")
+
+    path = await _save_upload(audio)
+    try:
+        inference, per_speaker = pipeline.identify_show(path, top_k=top_k, isolate=isolate)
+    finally:
+        os.unlink(path)
+
+    return ShowIdentifyResponse(
+        show=None if inference is None else InferredShow(
+            show_id=inference.show_id,
+            title=inference.show_title,
+            speakers_matched=inference.speakers_matched,
+            speakers_total=inference.speakers_total,
+            score=inference.score,
+        ),
+        speakers={
+            speaker: [IdentificationMatch(**r.to_dict()) for r in results]
+            for speaker, results in per_speaker.items()
+        },
     )
 
 

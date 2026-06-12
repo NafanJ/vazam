@@ -90,6 +90,11 @@ VERIFY_WINDOWS = 3
 MIN_WINDOW_SECONDS = 2.0
 WINDOW_AGREEMENT_THRESHOLD = 0.5
 
+# Cast-graph show inference: one ambiguous voice is weak evidence, but several
+# voices that all co-occur in one show's cast is nearly conclusive. A show must
+# be supported by at least this many distinct detected speakers to be inferred.
+SHOW_INFERENCE_MIN_SPEAKERS = 2
+
 
 # ── Data classes ─────────────────────────────────────────────────────────────
 
@@ -316,6 +321,61 @@ def get_embedding_for_segment(
     return get_embedding(chunk, device=device)
 
 
+# ── Cast-graph show inference ─────────────────────────────────────────────────
+
+@dataclass
+class ShowVote:
+    """Evidence for one show from cast co-occurrence voting."""
+    show_id: int
+    n_speakers: int            # distinct detected speakers with a candidate in this cast
+    score: float               # sum of each matched speaker's best similarity
+    speakers: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ShowInference:
+    """An inferred show plus the strength of the evidence behind it."""
+    show_id: int
+    show_title: str
+    speakers_matched: int
+    speakers_total: int
+    score: float
+
+
+def vote_shows(
+    candidates_per_speaker: dict[str, list[tuple[int, float]]],
+    actor_shows: dict[int, set[int]],
+    min_similarity: float = POSSIBLE_THRESHOLD,
+) -> list[ShowVote]:
+    """Rank shows by how many detected speakers their casts explain.
+
+    Each speaker contributes at most one vote per show (their best-similarity
+    candidate in that cast); candidates below min_similarity are too weak to
+    vote. Sorted by (distinct speakers, summed similarity), best first — the
+    cast graph plays the role of Shazam's consistency check.
+    """
+    per_show: dict[int, dict[str, float]] = {}
+    for speaker, candidates in candidates_per_speaker.items():
+        for actor_id, similarity in candidates:
+            if similarity < min_similarity:
+                continue
+            for show_id in actor_shows.get(actor_id, ()):
+                best = per_show.setdefault(show_id, {})
+                best[speaker] = max(best.get(speaker, 0.0), similarity)
+
+    votes = [
+        ShowVote(
+            show_id=show_id,
+            n_speakers=len(best),
+            score=round(sum(best.values()), 4),
+            speakers=sorted(best),
+        )
+        for show_id, best in per_show.items()
+    ]
+    votes.sort(key=lambda v: (v.n_speakers, v.score), reverse=True)
+    return votes
+
+
 # ── Multi-window verification ────────────────────────────────────────────────
 
 def split_windows(
@@ -429,6 +489,18 @@ class VazamPipeline:
             return None
         return {aid: count / len(windows) for aid, count in wins.items()}
 
+    @staticmethod
+    def _results_from_rows(rows: list[dict]) -> list[IdentificationResult]:
+        return [
+            IdentificationResult(
+                actor_id=row["actor_id"],
+                actor_name=row["actor_name"],
+                character_name=row["voice_label"],
+                confidence=float(row["similarity"]),
+            )
+            for row in rows
+        ]
+
     # ------------------------------------------------------------------
     # Single-speaker identification
     # ------------------------------------------------------------------
@@ -456,15 +528,7 @@ class VazamPipeline:
         speech = self._speech_tensor(audio_path, isolate=isolate)
         embedding = get_embedding(speech, device=self.device)
         rows = self.db.search_embeddings(embedding, top_k=top_k, show_id=show_id)
-        results = [
-            IdentificationResult(
-                actor_id=row["actor_id"],
-                actor_name=row["actor_name"],
-                character_name=row["voice_label"],
-                confidence=float(row["similarity"]),
-            )
-            for row in rows
-        ]
+        results = self._results_from_rows(rows)
 
         if verify and results:
             agreement = self._window_agreement(speech, show_id=show_id)
@@ -507,15 +571,7 @@ class VazamPipeline:
                             path, seg.start, seg.end, device=self.device
                         )
                         rows = self.db.search_embeddings(emb, top_k=top_k)
-                        per_speaker[seg.speaker_label] = [
-                            IdentificationResult(
-                                actor_id=row["actor_id"],
-                                actor_name=row["actor_name"],
-                                character_name=row["voice_label"],
-                                confidence=float(row["similarity"]),
-                            )
-                            for row in rows
-                        ]
+                        per_speaker[seg.speaker_label] = self._results_from_rows(rows)
                     return per_speaker
             except Exception:
                 pass  # fall through to single-speaker
@@ -523,3 +579,101 @@ class VazamPipeline:
         # Single-speaker fallback
         results = self.identify(path, top_k=top_k, isolate=False)
         return {"SPEAKER_00": results}
+
+    # ------------------------------------------------------------------
+    # Cast-graph show inference
+    # ------------------------------------------------------------------
+
+    def _speaker_embeddings(self, audio_path: str) -> dict[str, np.ndarray]:
+        """Diarize and produce one embedding per detected speaker.
+
+        All of a speaker's segments are concatenated before embedding (more
+        audio → better embedding), unlike identify_multi which embeds each
+        speech turn separately.
+        """
+        segments = diarize(audio_path, self.hf_token)
+        if not segments:
+            return {}
+
+        signal = load_audio_16k(audio_path)
+
+        by_label: dict[str, list[SpeakerSegment]] = {}
+        for seg in segments:
+            by_label.setdefault(seg.speaker_label, []).append(seg)
+
+        embeddings: dict[str, np.ndarray] = {}
+        for label, segs in by_label.items():
+            chunks = [
+                signal[:, int(s.start * 16000): int(s.end * 16000)]
+                for s in segs
+            ]
+            speech = torch.cat(chunks, dim=1)
+            embeddings[label] = get_embedding(speech, device=self.device)
+        return embeddings
+
+    def identify_show(
+        self,
+        audio_path: str,
+        top_k: int = 3,
+        isolate: bool = True,
+    ) -> tuple[Optional[ShowInference], dict[str, list[IdentificationResult]]]:
+        """Infer which show is playing from cast co-occurrence, then identify
+        each speaker closed-set within that show — no show_id input needed.
+
+        Diarizes the clip, searches each speaker globally, and votes on shows:
+        a show is inferred only when ≥ SHOW_INFERENCE_MIN_SPEAKERS distinct
+        speakers have a plausible candidate in its cast. Multiple speakers are
+        the *strongest* signal here, not a complication — one ambiguous voice
+        proves little, but voices that co-occur in one cast pin the show down.
+
+        Returns (inference, per_speaker_results). When no show can be inferred
+        (one speaker, no diarization, or no cast agreement), inference is None
+        and the per-speaker results are the global ones.
+        """
+        path = isolate_vocals(audio_path) if isolate else audio_path
+
+        speaker_embeddings: dict[str, np.ndarray] = {}
+        if self.use_diarization:
+            try:
+                speaker_embeddings = self._speaker_embeddings(path)
+            except Exception:
+                pass  # fall through to single-speaker fallback
+
+        if not speaker_embeddings:
+            return None, {"SPEAKER_00": self.identify(path, top_k=top_k, isolate=False)}
+
+        # Global (open-set) candidates per speaker
+        per_speaker_global: dict[str, list[IdentificationResult]] = {}
+        candidates: dict[str, list[tuple[int, float]]] = {}
+        for label, emb in speaker_embeddings.items():
+            rows = self.db.search_embeddings(emb, top_k=top_k)
+            per_speaker_global[label] = self._results_from_rows(rows)
+            candidates[label] = [
+                (row["actor_id"], float(row["similarity"])) for row in rows
+            ]
+
+        # Vote on shows via the cast graph
+        actor_ids = sorted({aid for cands in candidates.values() for aid, _ in cands})
+        actor_shows = self.db.get_shows_for_actors(actor_ids)
+        votes = vote_shows(candidates, actor_shows)
+
+        if not votes or votes[0].n_speakers < SHOW_INFERENCE_MIN_SPEAKERS:
+            return None, per_speaker_global
+
+        winner = votes[0]
+        show = self.db.get_show(winner.show_id) or {}
+
+        # Closed-set re-rank within the inferred show (reusing embeddings)
+        per_speaker: dict[str, list[IdentificationResult]] = {}
+        for label, emb in speaker_embeddings.items():
+            rows = self.db.search_embeddings(emb, top_k=top_k, show_id=winner.show_id)
+            per_speaker[label] = self._results_from_rows(rows)
+
+        inference = ShowInference(
+            show_id=winner.show_id,
+            show_title=show.get("title", ""),
+            speakers_matched=winner.n_speakers,
+            speakers_total=len(speaker_embeddings),
+            score=winner.score,
+        )
+        return inference, per_speaker

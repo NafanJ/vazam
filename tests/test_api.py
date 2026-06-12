@@ -265,6 +265,38 @@ def test_identify_multi_returns_speakers_dict(api_client):
     assert "SPEAKER_00" in body["speakers"]
 
 
+# ── /identify/show ────────────────────────────────────────────────────────────
+
+def test_identify_show_no_embeddings_returns_503(api_client):
+    resp = api_client.post(
+        "/identify/show",
+        files={"audio": _wav_upload()},
+        data={"isolate": "false"},
+    )
+    assert resp.status_code == 503
+
+
+def test_identify_show_falls_back_without_diarization(api_client):
+    """No HF_TOKEN in the test env → single-speaker fallback, show is null."""
+    actor_id = api_client.post("/actors", json={"name": "Steve Blum"}).json()["id"]
+    api_client.post(
+        f"/actors/{actor_id}/embeddings",
+        files={"audio": _wav_upload()},
+        data={"voice_label": "Natural Voice"},
+    )
+
+    resp = api_client.post(
+        "/identify/show",
+        files={"audio": _wav_upload()},
+        data={"isolate": "false"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["show"] is None
+    assert "SPEAKER_00" in body["speakers"]
+    assert body["speakers"]["SPEAKER_00"][0]["actor_name"] == "Steve Blum"
+
+
 # ── /index/rebuild ────────────────────────────────────────────────────────────
 
 def test_rebuild_index_empty(api_client):

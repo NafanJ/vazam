@@ -130,6 +130,27 @@ class VazamDB:
                 actors.append(actor_data[0])
         return actors
 
+    def get_shows_for_actors(self, actor_ids: list[int]) -> dict[int, set[int]]:
+        """Map each actor id to the set of show ids they have characters in.
+
+        Powers cast-graph show inference: detected speakers vote for shows
+        whose casts they plausibly belong to.
+        """
+        if not actor_ids:
+            return {}
+        rows = (
+            self._client.table("vazam_characters")
+            .select("actor_id, show_id")
+            .in_("actor_id", actor_ids)
+            .execute()
+            .data
+        )
+        out: dict[int, set[int]] = {}
+        for r in rows:
+            if r.get("show_id") is not None:
+                out.setdefault(r["actor_id"], set()).add(r["show_id"])
+        return out
+
     # ------------------------------------------------------------------
     # Shows
     # ------------------------------------------------------------------
