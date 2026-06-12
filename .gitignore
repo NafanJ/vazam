@@ -1,6 +1,9 @@
 # Environment variables — never commit real secrets
 .env
 
+# Node
+node_modules/
+
 # Python
 __pycache__/
 *.py[cod]
