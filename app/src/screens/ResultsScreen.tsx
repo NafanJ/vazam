@@ -21,7 +21,7 @@ import type {
 } from "@react-navigation/native-stack";
 
 import { ResultCard } from "../components/ResultCard";
-import type { IdentificationMatch, RootStackParamList } from "../types";
+import type { RootStackParamList } from "../types";
 
 type Props    = NativeStackScreenProps<RootStackParamList, "Results">;
 type Nav      = NativeStackNavigationProp<RootStackParamList, "Results">;

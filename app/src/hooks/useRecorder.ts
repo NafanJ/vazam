@@ -43,8 +43,27 @@ export function useRecorder(): UseRecorderResult {
     return () => {
       // Cleanup on unmount
       recorder.stopRecorder().catch(() => {});
-      if (timerRef.current) clearTimeout(timerRef.current);
+      if (timerRef.current) {clearTimeout(timerRef.current);}
     };
+  }, []);
+
+  const stop = useCallback(async (): Promise<string | null> => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+
+    try {
+      const result = await recorder.stopRecorder();
+      recorder.removeRecordBackListener();
+      setFilePath(result);
+      setState("done");
+      return result;
+    } catch (err: any) {
+      setError(err?.message ?? "Failed to stop recording");
+      setState("error");
+      return null;
+    }
   }, []);
 
   const start = useCallback(async () => {
@@ -76,26 +95,7 @@ export function useRecorder(): UseRecorderResult {
       setError(err?.message ?? "Failed to start recording");
       setState("error");
     }
-  }, []);
-
-  const stop = useCallback(async (): Promise<string | null> => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-
-    try {
-      const result = await recorder.stopRecorder();
-      recorder.removeRecordBackListener();
-      setFilePath(result);
-      setState("done");
-      return result;
-    } catch (err: any) {
-      setError(err?.message ?? "Failed to stop recording");
-      setState("error");
-      return null;
-    }
-  }, []);
+  }, [stop]);
 
   const reset = useCallback(() => {
     setState("idle");

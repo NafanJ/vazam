@@ -11,7 +11,6 @@
 import React, { useCallback, useState } from "react";
 import {
   Alert,
-  Animated,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -49,11 +48,11 @@ export default function HomeScreen(): React.JSX.Element {
 
   const handlePress = useCallback(async () => {
     if (state === "idle" || state === "done" || state === "error") {
-      if (state !== "idle") reset();
+      if (state !== "idle") {reset();}
       await start();
     } else if (state === "recording") {
       const filePath = await stop();
-      if (!filePath) return;
+      if (!filePath) {return;}
 
       // Brief state shows "processing" visually; API call happens here
       try {

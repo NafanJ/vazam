@@ -41,7 +41,7 @@ function FilmographyRow({ entry }: { entry: FilmographyEntry }) {
 }
 
 export default function ActorProfileScreen({ route }: Props): React.JSX.Element {
-  const { actorId, actorName } = route.params;
+  const { actorId } = route.params;
   const [profile, setProfile] = useState<ActorProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);

@@ -14,7 +14,6 @@ import {
   Easing,
   StyleSheet,
   TouchableOpacity,
-  View,
 } from "react-native";
 import type { RecordingState } from "../types";
 
