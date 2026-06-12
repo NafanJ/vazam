@@ -1,7 +1,11 @@
 /**
  * ResultsScreen — ranked list of identification results
  *
- * Receives `results: IdentificationMatch[]` from navigation params.
+ * Two modes, depending on navigation params:
+ *   - `results`: flat ranked list (single speaker, or user-filtered show)
+ *   - `speakers` (+ optional `inferredShow`): one section per detected voice,
+ *     with a banner naming the show inferred from cast co-occurrence
+ *
  * Tapping a result navigates to the actor's full profile.
  */
 
@@ -9,6 +13,7 @@ import React from "react";
 import {
   FlatList,
   SafeAreaView,
+  SectionList,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -21,22 +26,37 @@ import type {
 } from "@react-navigation/native-stack";
 
 import { ResultCard } from "../components/ResultCard";
-import type { RootStackParamList } from "../types";
+import type { IdentificationMatch, RootStackParamList } from "../types";
 
 type Props    = NativeStackScreenProps<RootStackParamList, "Results">;
 type Nav      = NativeStackNavigationProp<RootStackParamList, "Results">;
 
+interface SpeakerSection {
+  title: string;
+  data: IdentificationMatch[];
+}
+
 export default function ResultsScreen(): React.JSX.Element {
   const navigation = useNavigation<Nav>();
   const { params } = useRoute<Props["route"]>();
-  const { results } = params;
+  const { results, speakers, inferredShow } = params;
 
   const handleActorPress = (actorId: number, actorName: string) => {
     navigation.navigate("ActorProfile", { actorId, actorName });
   };
 
-  const noResults = results.length === 0;
-  const topResult = results[0];
+  // Per-voice sections, in stable diarization-label order
+  const sections: SpeakerSection[] | null = speakers
+    ? Object.keys(speakers)
+        .sort()
+        .map((label, i) => ({ title: `Voice ${i + 1}`, data: speakers[label] }))
+    : null;
+
+  const flatResults = results ?? [];
+  const noResults = sections
+    ? sections.every((s) => s.data.length === 0)
+    : flatResults.length === 0;
+  const topResult = flatResults[0];
   const isConfident = topResult?.match_level === "confident";
 
   return (
@@ -50,6 +70,23 @@ export default function ResultsScreen(): React.JSX.Element {
               Try a longer clip or enable voice isolation
             </Text>
           </>
+        ) : sections ? (
+          inferredShow ? (
+            <>
+              <Text style={styles.summaryTitle}>{inferredShow.title}</Text>
+              <Text style={styles.summarySubtitle}>
+                Show identified from{" "}
+                {inferredShow.speakers_matched} of {inferredShow.speakers_total} voices
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.summaryTitle}>Multiple voices</Text>
+              <Text style={styles.summarySubtitle}>
+                No single show matched every voice
+              </Text>
+            </>
+          )
         ) : isConfident ? (
           <>
             <Text style={styles.summaryTitle}>{topResult.actor_name}</Text>
@@ -71,9 +108,26 @@ export default function ResultsScreen(): React.JSX.Element {
       </View>
 
       {/* Results list */}
-      {!noResults && (
+      {!noResults && sections && (
+        <SectionList
+          sections={sections}
+          keyExtractor={(item, i) => `${item.actor_id}-${item.character_name}-${i}`}
+          renderItem={({ item, index }) => (
+            <ResultCard
+              match={item}
+              rank={index + 1}
+              onPress={(id) => handleActorPress(id, item.actor_name)}
+            />
+          )}
+          renderSectionHeader={({ section }) => (
+            <Text style={styles.listHeader}>{section.title}</Text>
+          )}
+          contentContainerStyle={styles.list}
+        />
+      )}
+      {!noResults && !sections && (
         <FlatList
-          data={results}
+          data={flatResults}
           keyExtractor={(item, i) => `${item.actor_id}-${item.character_name}-${i}`}
           renderItem={({ item, index }) => (
             <ResultCard
@@ -84,7 +138,7 @@ export default function ResultsScreen(): React.JSX.Element {
           )}
           contentContainerStyle={styles.list}
           ListHeaderComponent={
-            results.length > 1 ? (
+            flatResults.length > 1 ? (
               <Text style={styles.listHeader}>All candidates</Text>
             ) : null
           }
@@ -146,6 +200,7 @@ const styles = StyleSheet.create({
     textTransform:   "uppercase",
     letterSpacing:   0.5,
     marginHorizontal: 16,
+    marginTop:       8,
     marginBottom:    8,
   },
   actions: {

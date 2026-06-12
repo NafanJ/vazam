@@ -20,7 +20,7 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
-import { identify } from "../api/vazam";
+import { identify, identifyShow } from "../api/vazam";
 import { RecordButton } from "../components/RecordButton";
 import { useRecorder } from "../hooks/useRecorder";
 import type { RootStackParamList } from "../types";
@@ -56,14 +56,34 @@ export default function HomeScreen(): React.JSX.Element {
 
       // Brief state shows "processing" visually; API call happens here
       try {
-        const response = await identify({
-          audioPath:  filePath,
-          isolate:    true,   // always isolate from real-world audio
-          showId:     selectedShowId,
-          topK:       5,
-        });
+        if (selectedShowId != null) {
+          // User picked a show — closed-set search within its cast
+          const response = await identify({
+            audioPath:  filePath,
+            isolate:    true,   // always isolate from real-world audio
+            showId:     selectedShowId,
+            topK:       5,
+          });
+          navigation.navigate("Results", { results: response.results });
+        } else {
+          // No show picked — infer it from cast co-occurrence
+          const response = await identifyShow({
+            audioPath: filePath,
+            isolate:   true,
+            topK:      5,
+          });
+          const speakerLists = Object.values(response.speakers);
 
-        navigation.navigate("Results", { results: response.results });
+          if (!response.show && speakerLists.length === 1) {
+            // Single voice, nothing inferred — plain ranked list
+            navigation.navigate("Results", { results: speakerLists[0] });
+          } else {
+            navigation.navigate("Results", {
+              speakers:     response.speakers,
+              inferredShow: response.show,
+            });
+          }
+        }
       } catch (err: any) {
         Alert.alert(
           "Identification failed",

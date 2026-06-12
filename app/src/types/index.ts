@@ -77,7 +77,14 @@ export interface HealthResponse {
 
 export type RootStackParamList = {
   Home: undefined;
-  Results: { results: IdentificationMatch[]; multiSpeaker?: boolean };
+  Results: {
+    /** Flat ranked list (single speaker, or user-filtered show search). */
+    results?: IdentificationMatch[];
+    /** Per-speaker results from show inference (multi-speaker clips). */
+    speakers?: Record<string, IdentificationMatch[]>;
+    /** Show inferred from cast co-occurrence; null when no consensus. */
+    inferredShow?: InferredShow | null;
+  };
   ActorProfile: { actorId: number; actorName: string };
   ShowSearch: undefined;
   Settings: undefined;
