@@ -13,10 +13,12 @@ venv/
 # Database
 *.db
 
-# Audio samples and test files
+# Audio samples and test files (incl. benchmark clips — keep those local)
 *.mp3
 *.wav
 *.m4a
+*.flac
+*.ogg
 
 # ML model caches
 .cache/
