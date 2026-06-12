@@ -6,8 +6,7 @@ Vazam is "Shazam for Voice Actors": point a phone at any animated show, anime, o
 
 **Version:** 0.2.0
 **Stack:** Python 3 (FastAPI backend) + TypeScript/React Native (mobile frontend)
-**Database:** SQLite (upgradeable to PostgreSQL)
-**Vector search:** FAISS IndexFlatIP (cosine similarity)
+**Database & vector search:** Supabase (PostgreSQL + pgvector, cosine similarity via a `match_embeddings()` SQL function)
 
 ## Architecture
 
@@ -19,35 +18,56 @@ Audio clip
   → pyannote VAD             (trim silence, keep only speech)
   → pyannote diarization-3.1 (split multi-speaker clips per speaker)
   → SpeechBrain ECAPA-TDNN  (192-dim speaker embedding)
-  → FAISS IndexFlatIP        (cosine similarity search)
-  → SQLite                   (actor → character → show metadata lookup)
+  → pgvector                 (cosine similarity via match_embeddings RPC)
+  → multi-window verification (candidates must win overlapping sub-windows)
+  → Supabase tables          (actor → character → show metadata lookup)
   → "Steve Blum as Spike Spiegel (Cowboy Bebop) — 94% confidence"
 ```
+
+Two higher-level strategies sit on top:
+
+- **Show-aware search** — `show_id` restricts matching to a known cast (closed-set, much more accurate). The filter is applied inside the `match_embeddings()` SQL function.
+- **Cast-graph show inference** (`/identify/show`) — diarize the clip, match each speaker globally, and vote on shows by cast co-occurrence; when ≥ 2 distinct speakers share a cast, re-rank everyone closed-set within it. Gives show-aware accuracy without asking the user which show is playing.
 
 ## Directory Structure
 
 ```
 vazam/
 ├── api.py             FastAPI HTTP backend (main entry point for the server)
-├── pipeline.py        Full pipeline: isolation → VAD → diarize → embed → search
-├── db.py              SQLite wrapper: actors, shows, characters, embeddings tables
+├── pipeline.py        Full pipeline: isolation → VAD → diarize → embed → search → verify
+├── db.py              Supabase wrapper: actors, shows, characters, embeddings tables
+├── consensus.py       Cross-video consensus clustering for scraped voices (pure numpy)
+├── augment.py         Channel augmentation: reverb / noise / band-limit (pure DSP)
+├── scrape_audio.py    Consensus voice scraper (yt-dlp → diarize → consensus → store)
+├── eval.py            Accuracy benchmark harness (labelled clips → top-k metrics)
 ├── seed.py            AniList GraphQL seeder (metadata only, no audio)
 ├── embed_batch.py     Bulk audio-to-embedding importer (CLI tool)
-├── main.py            Standalone demo script (single-file quick test)
+├── main.py            ⚠ LEGACY standalone demo — still imports FAISS directly,
+│                      predates the Supabase migration; do not pattern-match on it
 ├── requirements.txt   Python dependencies
-├── *.mp3 / *.wav      Test audio samples
+├── migrations/        SQL migrations (apply via Supabase SQL editor / db push)
+│   └── 001_embedding_quality.sql
+├── benchmark/         Labelled eval clips (audio gitignored; see its README
+│                      for the phone-mic recording protocol)
+├── docs/
+│   └── data-acquisition-plan.md   Strategy for scaling voice-actor coverage
 ├── tests/
-│   ├── __init__.py
-│   ├── conftest.py    Shared fixtures; mocks all ML dependencies
+│   ├── conftest.py    Shared fixtures; in-memory fake Supabase + mocked ML
 │   ├── test_api.py    FastAPI endpoint integration tests
-│   ├── test_db.py     Database CRUD and embedding serialization tests
-│   └── test_pipeline.py  Pipeline logic and FAISS index tests
+│   ├── test_db.py     Database CRUD tests
+│   ├── test_pipeline.py        Pipeline logic, window verification
+│   ├── test_consensus.py       Consensus clustering + scraper helpers
+│   ├── test_show_inference.py  Cast-graph voting + identify_show
+│   ├── test_eval.py            Benchmark harness
+│   └── test_augment.py         Channel augmentation DSP + centroid folding
 └── app/               React Native mobile application
-    ├── package.json
+    ├── package.json    Scripts: test, lint, typecheck, ios/android/start
+    ├── tsconfig.json / .eslintrc.js / babel.config.js / metro.config.js
     ├── App.tsx         Root navigator
     └── src/
-        ├── api/vazam.ts        Typed Axios API client
-        ├── types/index.ts      Shared TypeScript types
+        ├── api/vazam.ts        Typed Axios client (identify, identifyShow, …)
+        ├── api/__tests__/      Jest tests with axios mocked
+        ├── types/index.ts      Shared TypeScript types + navigation params
         ├── screens/            HomeScreen, ResultsScreen, ActorProfileScreen, ShowSearchScreen
         ├── components/         RecordButton, ResultCard
         └── hooks/useRecorder.ts  Audio recording logic
@@ -55,13 +75,33 @@ vazam/
 
 ## Environment Variables
 
-| Variable   | Default    | Description                                                         |
-|------------|------------|---------------------------------------------------------------------|
-| `HF_TOKEN` | _(empty)_  | HuggingFace token — required for VAD + diarization (pyannote models). Accept terms at `hf.co/pyannote/voice-activity-detection` and `hf.co/pyannote/speaker-diarization-3.1` |
-| `DB_PATH`  | `vazam.db` | SQLite database file path                                           |
-| `DEVICE`   | auto       | `cuda` or `cpu` — if unset, auto-detects CUDA                      |
+| Variable       | Default   | Description                                                       |
+|----------------|-----------|-------------------------------------------------------------------|
+| `SUPABASE_URL` | _(empty)_ | Supabase project URL (`https://<ref>.supabase.co`)                |
+| `SUPABASE_KEY` | _(empty)_ | Supabase service-role key (writes require service role)           |
+| `HF_TOKEN`     | _(empty)_ | HuggingFace token — required for VAD + diarization (pyannote). Accept terms at `hf.co/pyannote/voice-activity-detection` and `hf.co/pyannote/speaker-diarization-3.1` |
+| `DEVICE`       | auto      | `cuda` or `cpu` — if unset, auto-detects CUDA                     |
 
-Without `HF_TOKEN`, VAD and diarization are disabled. The pipeline falls back to embedding the full audio file and single-speaker identification still works.
+A `.env` file is loaded automatically (`python-dotenv`). Without `HF_TOKEN`, VAD and diarization are disabled: single-speaker identification still works on the full audio, but `/identify/show` falls back to global results and the scraper degrades to whole-clip embeddings.
+
+## Database (Supabase + pgvector)
+
+Tables (all prefixed `vazam_`):
+
+```
+vazam_actors      — id, name, bio, image_url, anilist_id (UNIQUE upsert key)
+vazam_shows       — id, title, media_type, year, image_url, anilist_id (UNIQUE)
+                    media_type ∈ {anime, cartoon, game, other}
+vazam_characters  — id, name, show_id, actor_id, image_url, anilist_id (UNIQUE)
+vazam_embeddings  — id, actor_id, character_id, voice_label (default "Natural Voice"),
+                    embedding vector(192), audio_source, verified, contributor_id,
+                    source_url, duration_s, quality_score
+```
+
+- Similarity search goes through the `match_embeddings(query_embedding, top_k, show_id_filter)` PostgreSQL function (pgvector `<=>` cosine distance), called via Supabase RPC.
+- Embeddings are stored as `vector(192)` (passed as Python lists, always L2-normalized float32).
+- `add_actor` / `add_show` / `add_character` are upserts on `anilist_id` — safe to re-run.
+- **Migrations:** the base schema and `match_embeddings()` were applied to Supabase manually, before `migrations/` existed. New schema changes live in `migrations/*.sql` and must be applied via the Supabase SQL editor (or `supabase db push`). `001_embedding_quality.sql` (source_url, duration_s, quality_score) is required — `db.add_embedding` always sends those columns.
 
 ## Development Setup
 
@@ -73,7 +113,11 @@ pip install -r requirements.txt
 # Optional: install test dependencies (commented out in requirements.txt)
 pip install pytest httpx
 
-# Set HuggingFace token if you want VAD + diarization
+# Required: Supabase project credentials
+export SUPABASE_URL=https://<ref>.supabase.co
+export SUPABASE_KEY=<service_role_key>
+
+# Optional but strongly recommended: enables VAD, diarization, show inference
 export HF_TOKEN=hf_...
 
 # Run the API server
@@ -85,40 +129,31 @@ uvicorn api:app --reload
 
 ```bash
 cd app
-npm install
+npm install        # resolves cleanly; react-test-renderer is pinned to React 18.2
 
-# iOS
-npm run ios
-
-# Android
-npm run android
-
-# Metro bundler only
-npm run start
+npm run ios        # or: npm run android, npm run start (Metro only)
 ```
 
 ## Running Tests
 
-Tests mock all heavy ML dependencies (SpeechBrain, Demucs, pyannote) so they run without GPU or model downloads.
+Backend tests mock all heavy ML dependencies (SpeechBrain, Demucs, pyannote) and replace the Supabase client with an in-memory fake — no GPU, network, or model downloads needed.
 
 ```bash
-# Run all tests
-pytest
-
-# Run a specific file
-pytest tests/test_api.py -v
-
-# Run a specific test
+pytest                                   # all backend tests
+pytest tests/test_api.py -v              # one file
 pytest tests/test_api.py::test_identify_returns_results -v
 ```
 
-Mobile app tests:
+Mobile app:
 
 ```bash
 cd app
-npm test
-npm run lint   # ESLint on src/**/*.{ts,tsx}
+npm test           # jest (react-native preset, axios mocked)
+npm run lint       # ESLint — correctness rules only; formatting rules are off
+npm run typecheck  # tsc --noEmit, strict via @react-native/typescript-config
 ```
+
+**Measure accuracy changes.** Any change that could affect identification accuracy (thresholds, embeddings, scraper, pipeline stages) should be evaluated before/after with `eval.py` against the labelled clips in `benchmark/` (see `benchmark/README.md` — clips must be phone-mic recordings, not clean rips).
 
 ## Key Modules
 
@@ -127,85 +162,86 @@ npm run lint   # ESLint on src/**/*.{ts,tsx}
 - Entry point: `uvicorn api:app --reload`
 - Global state: `db: VazamDB` and `pipeline: VazamPipeline` initialized in the `lifespan` context manager
 - CORS is open (`allow_origins=["*"]`) — restrict in production
-- FAISS index is rebuilt from the DB automatically on startup via `_rebuild_index()`
-- Adding an embedding via `POST /actors/{id}/embeddings` incrementally updates the live in-memory index without requiring a full rebuild
+- `POST /index/rebuild` is a backward-compatibility no-op: pgvector manages its index automatically
 
 ### `pipeline.py` — Audio Processing
 
-Key classes and functions:
+Key symbols:
 
 | Symbol | Description |
 |--------|-------------|
-| `VazamPipeline` | Orchestrator — holds FAISS index, calls isolation/VAD/diarize/embed |
-| `EmbeddingIndex` | Thin FAISS `IndexFlatIP` wrapper; stores `(actor_id, actor_name, character_name)` in a parallel list |
-| `isolate_vocals()` | Runs Demucs via subprocess; falls back to original file on failure |
-| `get_speech_segments()` | Returns `[(start, end)]` tuples of speech from pyannote VAD |
-| `get_embedding()` | Accepts a file path or a `(1, N)` tensor; returns a 192-dim L2-normalized `float32` array |
-| `diarize()` | Returns `list[SpeakerSegment]` from pyannote speaker-diarization-3.1 |
-| `merge_speaker_segments()` | Merges consecutive same-speaker segments for better embedding quality |
+| `VazamPipeline` | Orchestrator — isolation/VAD/diarize/embed/search/verify |
+| `VazamPipeline.identify()` | Single-speaker ID with multi-window verification (`verify=True` default) |
+| `VazamPipeline.identify_multi()` | Diarize + identify each speech turn separately |
+| `VazamPipeline.identify_show()` | Cast-graph show inference → closed-set re-rank; returns `(ShowInference \| None, per_speaker_results)` |
+| `vote_shows()` | Pure cast co-occurrence voting over per-speaker candidates |
+| `split_windows()` | Overlapping sub-windows of a speech tensor for verification |
+| `load_audio_16k()` | Load any file as (1, N) mono 16 kHz tensor |
+| `get_embedding()` | File path or (1, N) tensor → 192-dim L2-normalized float32 array |
+| `isolate_vocals()` | Demucs via subprocess; falls back to original file on failure |
+| `diarize()` / `merge_speaker_segments()` | pyannote diarization + same-speaker merging |
 
-Constants (in `pipeline.py`):
+Constants:
 
 ```python
 EMBEDDING_DIM       = 192
-CONFIDENT_THRESHOLD = 0.70   # cosine similarity ≥ 0.70 → "confident"
-POSSIBLE_THRESHOLD  = 0.50   # 0.50–0.69 → "possible"; < 0.50 → "none"
+CONFIDENT_THRESHOLD = 0.70   # cosine ≥ 0.70 AND window-verified → "confident"
+POSSIBLE_THRESHOLD  = 0.50   # 0.50–0.69, or failed verification → "possible"
 MIN_SPEECH_SECONDS  = 1.5    # segments shorter than this are dropped
+VERIFY_WINDOWS      = 3      # overlapping half-length windows per query
+MIN_WINDOW_SECONDS  = 2.0    # clips under ~4s of speech skip verification
+WINDOW_AGREEMENT_THRESHOLD = 0.5   # majority of windows required
+SHOW_INFERENCE_MIN_SPEAKERS = 2    # speakers needed to infer a show
 ```
+
+**Multi-window verification:** a "confident" match must clear the similarity threshold *and* win a majority of 3 overlapping sub-windows of the query (a consistent voice wins every window; a coincidental near-neighbor wins one). High-similarity matches that fail verification demote to "possible". Results carry `window_agreement` (None when the clip was too short to window).
 
 Heavy models are module-level globals (`_classifier`, `_vad_pipeline`, `_diarize_pipeline`) loaded lazily on first call so the module imports quickly.
 
-### `db.py` — SQLite Database
+### `db.py` — Supabase Wrapper
 
-Schema:
+All database access goes through `VazamDB` — no raw queries elsewhere. Notable methods: `search_embeddings()` (match_embeddings RPC), `get_shows_for_actors()` (powers cast-graph voting), `add_embedding()` (with `source_url` / `duration_s` / `quality_score`).
 
+### `consensus.py` + `scrape_audio.py` — Consensus Voice Scraper
+
+Implements the strategy in `docs/data-acquisition-plan.md`. For each actor:
+
+1. Search YouTube with several independent query templates (interview / panel / podcast); pick 2–3 **distinct** videos (2–60 min), download only the first 10 minutes of each.
+2. Diarize each video; embed every speaker with ≥ 8s of speech (capped at 60s).
+3. Cluster speakers **across** videos (`consensus.py`, greedy centroid linkage, link threshold 0.60). The actor is the cluster recurring in ≥ 2 distinct videos — interviewers differ per video. No recurrence → **nothing stored**, never a blind embedding.
+4. Re-embed the winning cluster's speech under simulated query conditions (`augment.py`: synthetic-RIR reverb, white noise @ 15 dB SNR, TV-speaker band-limiting — deterministic/seeded) and fold those into the stored centroid, so references match the phone-mic-of-a-TV channel they'll be searched against. Quality score stays computed on clean embeddings. Disable with `--no-augment`.
+
+```bash
+python scrape_audio.py                      # all actors with zero embeddings
+python scrape_audio.py --actor "Steve Blum" --force   # re-scrape one actor
+python scrape_audio.py --dry-run            # print queries only
 ```
-actors      — id, name, bio, image_url, anilist_id (UNIQUE)
-shows       — id, title, media_type, year, anilist_id (UNIQUE)
-              media_type ∈ {anime, cartoon, game, other}
-characters  — id, name, show_id → shows, actor_id → actors, anilist_id (UNIQUE)
-embeddings  — id, actor_id → actors, character_id → characters,
-              voice_label (default "Natural Voice"), embedding_blob (BLOB),
-              audio_source, verified (0/1), faiss_id
-```
 
-Embeddings are stored as raw `float32` bytes using `np.ndarray.tobytes()` / `np.frombuffer(..., dtype="float32")`.
+Demucs is intentionally skipped here (interviews have no music bed). Per-character clip scraping is deliberately **not** done in bulk (see anti-goal in the acquisition plan).
 
-All `add_actor`, `add_show`, and `add_character` calls are upserts on `anilist_id` — safe to re-run.
+### `eval.py` — Accuracy Benchmark
 
-`VazamDB` uses WAL journal mode and enforces foreign keys. Transactions are handled via the `_tx()` context manager.
+Runs labelled clips (`benchmark/<show>/<actor>/<clip>`) through `identify()` and reports top-1/3/5 accuracy (global and show-aware), confident-claim precision, per-show breakdown, and avg latency. `--json out.json` for tracking runs over time; `--no-verify` / `--isolate` to A/B pipeline options.
 
 ### `seed.py` — AniList Metadata Seeder
 
-Fetches popular anime, characters, and voice actor credits from the free AniList GraphQL API (no auth needed). Inserts/upserts into the local DB. Does **not** download or process audio.
+Fetches popular anime, characters, and voice actor credits from the free AniList GraphQL API and upserts into Supabase. Does **not** download audio. Idempotent (upserts on `anilist_id`).
 
 ```bash
 python seed.py                          # top 200 anime, English VAs
 python seed.py --show "Cowboy Bebop"    # single show
 python seed.py --lang JAPANESE          # Japanese seiyuu
-python seed.py --limit 50 --delay 1    # smaller batch, slower rate
 ```
 
 Rate limit: AniList allows ~90 requests/minute; default delay is 0.7s.
 
 ### `embed_batch.py` — Bulk Audio Importer
 
-Expected sample directory layout:
-
-```
-samples/
-└── Steve Blum/
-    ├── natural/              → voice_label = "Natural Voice"
-    │   └── interview.wav
-    └── Spike Spiegel/        → voice_label = "Spike Spiegel"
-        └── ep01.wav
-```
+Walks `samples/<Actor Name>/<Voice Label>/*.{wav,mp3}` and stores one embedding per file (voice label from the subdirectory name; `natural/` → "Natural Voice").
 
 ```bash
-python embed_batch.py samples/ --dry-run        # preview without writing
-python embed_batch.py samples/ --isolate        # run Demucs first
-python embed_batch.py samples/ --verified       # mark as verified embeddings
-python embed_batch.py samples/ --rebuild-index http://localhost:8000
+python embed_batch.py samples/ --dry-run
+python embed_batch.py samples/ --isolate --verified
 ```
 
 ## API Reference
@@ -214,8 +250,9 @@ Interactive docs at `http://localhost:8000/docs` when the server is running.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/identify` | Upload audio → top-K voice actor matches |
+| `POST` | `/identify` | Upload audio → top-K matches (params: `isolate`, `show_id`, `top_k`, `verify`) |
 | `POST` | `/identify/multi` | Diarize + identify each speaker separately (requires `HF_TOKEN`) |
+| `POST` | `/identify/show` | Infer the show from cast co-occurrence, then identify each speaker within it |
 | `POST` | `/actors` | Register a voice actor |
 | `GET`  | `/actors` | List all actors (supports `limit`, `offset`) |
 | `GET`  | `/actors/{id}` | Actor profile + filmography |
@@ -223,36 +260,25 @@ Interactive docs at `http://localhost:8000/docs` when the server is running.
 | `POST` | `/shows` | Register a show |
 | `GET`  | `/shows` | List all shows |
 | `GET`  | `/shows/{id}` | Show details + cast list |
-| `GET`  | `/shows/search?q=` | Search shows by title (LIKE match) |
-| `POST` | `/index/rebuild` | Rebuild FAISS index from DB (`strategy=individual|centroid`) |
-| `GET`  | `/health` | Liveness check + index stats |
+| `GET`  | `/shows/search?q=` | Search shows by title (ILIKE match) |
+| `POST` | `/index/rebuild` | No-op kept for compatibility (pgvector self-manages) |
+| `GET`  | `/health` | Liveness check + embedding count |
 
-### `/identify` parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `audio` | required | WAV, MP3, or M4A file upload |
-| `isolate` | `false` | Run Demucs vocal isolation first |
-| `show_id` | `null` | Restrict results to actors in this show (show-aware search) |
-| `top_k` | `5` | Number of candidates to return (1–20) |
-
-### Index rebuild strategies
-
-- `individual` (default): one FAISS entry per stored embedding row — best with 1–2 samples per voice label
-- `centroid`: one entry per `(actor_id, voice_label)` group averaged and re-normalized — recommended once you have ≥ 3 samples per label; reduces index size and improves stability
+Identification responses include `confidence`, `window_agreement`, and `match_level` (`confident` / `possible` / `none`). `/identify/show` responses include `show` (`null` when no cast consensus) with `speakers_matched` / `speakers_total`.
 
 ## Testing Patterns
 
-### ML mocking in conftest.py
+### conftest.py — fake Supabase + mocked ML
 
-All heavy dependencies are patched before `api.py` is imported:
+The Supabase client is replaced by an in-memory fake (`_FakeSupabase`: query-builder supporting insert/upsert/select/eq/in_/ilike/order/range, plus `set_rpc()` for `match_embeddings`). Heavy ML is patched before `api.py` is imported:
 
 ```python
 with (
     patch("pipeline.isolate_vocals", side_effect=lambda p, **kw: p),
     patch("pipeline._load_embedding_model", return_value=fake_encoder),
     patch("torchaudio.load", return_value=fake_signal),
-    patch.dict("os.environ", {"DB_PATH": db_path, "HF_TOKEN": ""}),
+    patch("db.create_client", return_value=fake_sb),
+    patch.dict("os.environ", {...}),
 ):
     import importlib
     import api as api_module
@@ -269,104 +295,84 @@ with (
 |---------|-------------|
 | `tmp_wav` | Temporary silent 16 kHz WAV file path |
 | `random_embedding` | Random L2-normalized 192-dim `float32` array (seed=42) |
-| `db` | Fresh `VazamDB` backed by a temp SQLite file, auto-deleted |
-| `api_client` | `TestClient` for `api.py` with all ML mocked |
+| `db` | `VazamDB` backed by the in-memory fake Supabase |
+| `api_client` | `TestClient` for `api.py` with ML + Supabase mocked |
 
 ### Writing new tests
 
-- Import `make_wav_bytes()` from `tests.conftest` to create in-memory WAV bytes for file uploads
-- Use `files={"audio": ("test.wav", make_wav_bytes(), "audio/wav")}` in multipart requests
-- Tests do not require `HF_TOKEN` — diarization/VAD are disabled when it is empty
+- Import `make_wav_bytes()` from `tests.conftest` for in-memory WAV uploads: `files={"audio": ("test.wav", make_wav_bytes(), "audio/wav")}`
+- Tests run with `HF_TOKEN=""` — diarization/VAD are disabled; mock `diarize` or `_speaker_embeddings` to exercise multi-speaker paths
+- Pipeline unit tests patch `p._speech_tensor` + `pipeline.get_embedding` (not `embed_file`)
 - Keep ML models mocked; never download real models in tests
+- Synthetic "same voice" vectors need noise with fixed total norm (per-component noise swamps the signal in 192 dims) — see `_appearance()` in `test_consensus.py`
 
 ## Code Conventions
 
 ### Python (backend)
 
 - Python 3.10+ features (`match`, union types with `|`) are used
-- `from __future__ import annotations` is present in all modules (for PEP 563 deferred evaluation)
+- `from __future__ import annotations` is present in all modules
 - Type annotations everywhere; prefer `Optional[X]` for nullable parameters in public APIs
 - Module-level docstrings document the module's purpose, public interface, and usage examples
-- Use `dataclasses` for plain data containers (`SpeakerSegment`, `IdentificationResult`)
-- Database access goes exclusively through `VazamDB` — no raw SQL outside `db.py`
+- Use `dataclasses` for plain data containers (`SpeakerSegment`, `IdentificationResult`, `ShowVote`, `ConsensusResult`, …)
+- Database access goes exclusively through `VazamDB` — no Supabase calls outside `db.py`
 - All embeddings are `float32` numpy arrays, L2-normalized to unit length
 - Temporary files from uploads are cleaned up in `finally` blocks (see `_save_upload` in `api.py`)
-- Heavy imports (SpeechBrain, pyannote) are inside functions, not at module top-level, to keep startup fast
+- Heavy imports (SpeechBrain, pyannote, torch in CLI tools) are inside functions, not at module top-level, to keep startup fast
 
 ### TypeScript / React Native (frontend)
 
-- TypeScript 5; strict mode via `@react-native/typescript-config`
+- TypeScript 5; strict mode via `@react-native/typescript-config` (`npm run typecheck`)
 - Navigation uses React Navigation v6 with typed stack params (defined in `src/types/index.ts`)
 - All API calls go through the typed client in `src/api/vazam.ts` — never call `axios` directly from screens
 - State management via Zustand; audio recording via the `useRecorder` hook
-- ESLint enforced on `src/**/*.{ts,tsx}` via `npm run lint`
+- ESLint enforced on `src/**/*.{ts,tsx}` via `npm run lint`; formatting rules (`prettier/prettier`, `quotes`) are intentionally off — the codebase uses double quotes
 
-## Multi-Embedding Strategy
+## Identification Strategies
 
-Each voice actor stores **separate embeddings per voice style**:
+### Multi-embedding per voice style
 
-- **Natural Voice** — from interviews, convention panels, or demo reels
-- **Per-character voices** — one or more clips per distinct character voice
+Each voice actor stores **separate embeddings per voice style** (`voice_label` on `vazam_embeddings`): "Natural Voice" (interviews, panels — the consensus scraper's output) plus optional per-character voices. This matters for actors who substantially alter their voice between roles (e.g., Seth MacFarlane as Peter vs. Stewie Griffin). Per-character embeddings are added lazily and selectively, never in bulk.
 
-This improves accuracy for actors who substantially alter their voice between roles (e.g., Seth MacFarlane as Peter Griffin vs. Stewie Griffin vs. Quagmire). The `voice_label` field on the `embeddings` table holds the label; "Natural Voice" is the default.
+### Show-aware search
 
-## Show-Aware Search
+Pass `show_id` to `POST /identify` to restrict matching to that show's cast — converts open-set recognition into closed-set, which significantly improves accuracy. Applied inside the `match_embeddings()` SQL function.
 
-Pass `show_id` to `POST /identify` to restrict matching to actors known to appear in that show. This converts an open-set speaker recognition problem into a closed-set one, which significantly improves accuracy. The filter is applied post-FAISS-search by intersecting results with `db.get_actor_ids_for_show(show_id)`.
+### Cast-graph show inference
+
+`POST /identify/show` recovers show-aware accuracy with zero user input: each diarized speaker votes for shows whose casts contain a plausible candidate (similarity ≥ 0.50); shows are ranked by distinct speakers explained, then summed similarity. Multi-speaker TV audio — the hardest case for plain identification — is the *strongest* signal here. The mobile HomeScreen uses this path whenever the user hasn't picked a show filter.
 
 ## Common Workflows
 
-### Add a new voice actor and sample
+### Seed metadata, scrape voices, evaluate
 
 ```bash
-# 1. Create actor record
+python seed.py --show "Cowboy Bebop"     # cast + characters from AniList
+python scrape_audio.py --limit 30        # consensus-scrape actors without embeddings
+python eval.py benchmark/                # measure (after recording labelled clips)
+```
+
+### Add a voice actor and sample manually
+
+```bash
 curl -X POST http://localhost:8000/actors \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Steve Blum"}'
+  -H "Content-Type: application/json" -d '{"name": "Steve Blum"}'
 # → {"id": 1, ...}
 
-# 2. Upload natural voice
 curl -X POST http://localhost:8000/actors/1/embeddings \
-  -F "audio=@blum_interview.wav" \
-  -F "voice_label=Natural Voice"
-
-# 3. Upload character voice
-curl -X POST http://localhost:8000/actors/1/embeddings \
-  -F "audio=@blum_spike.wav" \
-  -F "voice_label=Spike Spiegel"
-  -F "isolate=true"
+  -F "audio=@blum_interview.wav" -F "voice_label=Natural Voice"
 ```
 
 ### Identify a voice
 
 ```bash
 curl -X POST http://localhost:8000/identify \
-  -F "audio=@test_clip.mp3" \
-  -F "isolate=true" \
-  -F "top_k=5"
+  -F "audio=@test_clip.mp3" -F "isolate=true" -F "top_k=5"
+
+# Or infer the show automatically from a multi-speaker clip:
+curl -X POST http://localhost:8000/identify/show -F "audio=@tv_clip.mp3"
 ```
 
-### Rebuild FAISS index after bulk import
+### Apply a schema migration
 
-```bash
-# Use centroid strategy once you have ≥ 3 samples per voice label
-curl -X POST "http://localhost:8000/index/rebuild?strategy=centroid"
-```
-
-### Seed metadata from AniList, then import audio
-
-```bash
-python seed.py --show "Cowboy Bebop"
-python embed_batch.py samples/ --isolate --rebuild-index http://localhost:8000
-```
-
-## Upgrade Path: SQLite → PostgreSQL
-
-`db.py` uses only standard SQL compatible with PostgreSQL. To migrate:
-
-1. Replace `sqlite3.connect(...)` with a `psycopg2` or `asyncpg` connection
-2. Change `?` placeholders to `%s` (psycopg2) or `$1` (asyncpg)
-3. Change `AUTOINCREMENT` → `SERIAL` / `GENERATED ALWAYS AS IDENTITY`
-4. Remove `PRAGMA` statements; configure WAL at the server level
-
-FAISS index remains in-memory regardless of the DB backend.
+Run the SQL in `migrations/*.sql` via the Supabase SQL editor (or `supabase db push`). Do this before running code that depends on the new columns.
