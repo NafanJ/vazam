@@ -126,6 +126,7 @@ class IdentificationMatch(BaseModel):
     actor_name: str
     character_name: str
     confidence: float
+    window_agreement: Optional[float] = None  # fraction of verification windows won
     match_level: str   # "confident" | "possible" | "none"
 
 
@@ -162,18 +163,23 @@ async def identify(
     isolate: bool = Form(False, description="Run Demucs vocal isolation first"),
     show_id: Optional[int] = Form(None, description="Restrict search to actors in this show"),
     top_k: int = Form(5, ge=1, le=20),
+    verify: bool = Form(True, description="Multi-window consistency check on candidates"),
 ):
     """Identify the voice actor in an uploaded audio clip.
 
     - Set `isolate=true` when recording contains background music or SFX.
     - Set `show_id` to restrict matching to a known cast (show-aware search).
+    - `verify` (default on) re-checks candidates against overlapping sub-windows
+      of the clip; a match is only "confident" if it wins a majority of windows.
     """
     if db.get_embedding_count() == 0:
         raise HTTPException(503, "No embeddings in index. Add voice samples first.")
 
     path = await _save_upload(audio)
     try:
-        results = pipeline.identify(path, top_k=top_k, isolate=isolate, show_id=show_id)
+        results = pipeline.identify(
+            path, top_k=top_k, isolate=isolate, show_id=show_id, verify=verify,
+        )
     finally:
         os.unlink(path)
 

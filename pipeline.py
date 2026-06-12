@@ -7,6 +7,8 @@ Stages:
   3. Diarization      — pyannote speaker-diarization-3.1
   4. Embedding        — SpeechBrain ECAPA-TDNN (192-dim, cosine)
   5. Search           — pgvector cosine similarity via Supabase RPC
+  6. Verification     — overlapping query sub-windows must agree on the
+                        winner for a match to be reported as "confident"
 """
 
 from __future__ import annotations
@@ -80,6 +82,14 @@ POSSIBLE_THRESHOLD = 0.50
 # Minimum speech duration (seconds) needed to generate a reliable embedding
 MIN_SPEECH_SECONDS = 1.5
 
+# Multi-window verification: a "confident" match must also win a majority of
+# overlapping sub-windows of the query — a consistent voice wins every window,
+# a coincidental near-neighbor wins one. Clips with less speech than
+# 2 × MIN_WINDOW_SECONDS skip verification (too short to window).
+VERIFY_WINDOWS = 3
+MIN_WINDOW_SECONDS = 2.0
+WINDOW_AGREEMENT_THRESHOLD = 0.5
+
 
 # ── Data classes ─────────────────────────────────────────────────────────────
 
@@ -98,28 +108,41 @@ class SpeakerSegment:
 
 @dataclass
 class IdentificationResult:
-    """Result of a single voice actor identification attempt."""
+    """Result of a single voice actor identification attempt.
+
+    window_agreement is the fraction of verification windows this actor won
+    (None when the clip was too short to verify). A match is "confident" only
+    if its similarity clears CONFIDENT_THRESHOLD *and* it won a majority of
+    windows; a high-similarity match that fails verification demotes to
+    "possible".
+    """
     actor_id: int
     actor_name: str
     character_name: str
     confidence: float
+    window_agreement: Optional[float] = None
 
     @property
     def confident(self) -> bool:
-        return self.confidence >= CONFIDENT_THRESHOLD
+        if self.confidence < CONFIDENT_THRESHOLD:
+            return False
+        return (self.window_agreement is None
+                or self.window_agreement >= WINDOW_AGREEMENT_THRESHOLD)
 
     @property
     def possible(self) -> bool:
-        return POSSIBLE_THRESHOLD <= self.confidence < CONFIDENT_THRESHOLD
+        return self.confidence >= POSSIBLE_THRESHOLD and not self.confident
 
     def to_dict(self) -> dict:
         return {
-            "actor_id":       self.actor_id,
-            "actor_name":     self.actor_name,
-            "character_name": self.character_name,
-            "confidence":     round(self.confidence, 4),
-            "match_level":    "confident" if self.confident else
-                              "possible"  if self.possible  else "none",
+            "actor_id":         self.actor_id,
+            "actor_name":       self.actor_name,
+            "character_name":   self.character_name,
+            "confidence":       round(self.confidence, 4),
+            "window_agreement": None if self.window_agreement is None
+                                else round(self.window_agreement, 3),
+            "match_level":      "confident" if self.confident else
+                                "possible"  if self.possible  else "none",
         }
 
 
@@ -154,6 +177,18 @@ def isolate_vocals(input_path: str, output_dir: str = "separated") -> str:
     return input_path
 
 
+# ── Audio loading ────────────────────────────────────────────────────────────
+
+def load_audio_16k(audio_path: str) -> torch.Tensor:
+    """Load an audio file as a (1, N) mono float tensor at 16 kHz."""
+    signal, fs = torchaudio.load(audio_path)
+    if signal.shape[0] > 1:
+        signal = signal.mean(dim=0, keepdim=True)
+    if fs != 16000:
+        signal = torchaudio.functional.resample(signal, fs, 16000)
+    return signal
+
+
 # ── Stage 2: VAD — extract speech-only segments ──────────────────────────────
 
 def get_speech_segments(audio_path: str, hf_token: str) -> list[tuple[float, float]]:
@@ -176,11 +211,7 @@ def extract_speech_audio(audio_path: str, segments: list[tuple[float, float]]) -
 
     Returns a (1, N) float32 tensor at 16 kHz.
     """
-    signal, fs = torchaudio.load(audio_path)
-    if signal.shape[0] > 1:
-        signal = signal.mean(dim=0, keepdim=True)
-    if fs != 16000:
-        signal = torchaudio.functional.resample(signal, fs, 16000)
+    signal = load_audio_16k(audio_path)
 
     chunks = []
     for start, end in segments:
@@ -257,14 +288,7 @@ def get_embedding(audio: str | torch.Tensor, device: str = "cpu") -> np.ndarray:
     """
     model = _load_embedding_model(device)
 
-    if isinstance(audio, str):
-        signal, fs = torchaudio.load(audio)
-        if signal.shape[0] > 1:
-            signal = signal.mean(dim=0, keepdim=True)
-        if fs != 16000:
-            signal = torchaudio.functional.resample(signal, fs, 16000)
-    else:
-        signal = audio
+    signal = load_audio_16k(audio) if isinstance(audio, str) else audio
 
     embedding = model.encode_batch(signal)
     embedding = embedding.squeeze().cpu().numpy().astype("float32")
@@ -283,17 +307,41 @@ def get_embedding_for_segment(
     device: str = "cpu",
 ) -> np.ndarray:
     """Generate an embedding for a specific time slice of an audio file."""
-    signal, fs = torchaudio.load(audio_path)
-    if signal.shape[0] > 1:
-        signal = signal.mean(dim=0, keepdim=True)
-    if fs != 16000:
-        signal = torchaudio.functional.resample(signal, fs, 16000)
+    signal = load_audio_16k(audio_path)
 
     s = int(start * 16000)
     e = int(end   * 16000)
     chunk = signal[:, s:e]
 
     return get_embedding(chunk, device=device)
+
+
+# ── Multi-window verification ────────────────────────────────────────────────
+
+def split_windows(
+    signal: torch.Tensor,
+    n: int = VERIFY_WINDOWS,
+    fraction: float = 0.5,
+    min_window_seconds: float = MIN_WINDOW_SECONDS,
+    sample_rate: int = 16000,
+) -> list[torch.Tensor]:
+    """Split a (1, N) tensor into n overlapping windows for verification.
+
+    Each window covers `fraction` of the signal; windows are evenly spaced so
+    the first starts at 0 and the last ends at the end. Returns [] when the
+    signal is too short to yield windows of at least min_window_seconds —
+    callers should skip verification in that case.
+    """
+    total = signal.shape[1]
+    window = int(total * fraction)
+    if n < 2 or window < int(min_window_seconds * sample_rate):
+        return []
+
+    stride = (total - window) / (n - 1)
+    return [
+        signal[:, int(round(i * stride)): int(round(i * stride)) + window]
+        for i in range(n)
+    ]
 
 
 # ── Stage 5: Orchestrator ────────────────────────────────────────────────────
@@ -329,10 +377,11 @@ class VazamPipeline:
     # Embedding helpers
     # ------------------------------------------------------------------
 
-    def embed_file(self, audio_path: str, isolate: bool = False) -> np.ndarray:
-        """Generate an embedding from a file, with optional voice isolation.
+    def _speech_tensor(self, audio_path: str, isolate: bool = False) -> torch.Tensor:
+        """Load a file as a (1, N) 16 kHz speech tensor.
 
-        If use_vad is enabled, only speech segments are used for embedding.
+        Runs optional Demucs isolation, then keeps only VAD speech segments
+        when use_vad is enabled (falling back to the full audio on failure).
         """
         path = isolate_vocals(audio_path) if isolate else audio_path
 
@@ -340,12 +389,45 @@ class VazamPipeline:
             try:
                 segments = get_speech_segments(path, self.hf_token)
                 if segments:
-                    speech_tensor = extract_speech_audio(path, segments)
-                    return get_embedding(speech_tensor, device=self.device)
+                    return extract_speech_audio(path, segments)
             except Exception:
-                pass  # fall through to full-file embedding
+                pass  # fall through to full-file audio
 
-        return get_embedding(path, device=self.device)
+        return load_audio_16k(path)
+
+    def embed_file(self, audio_path: str, isolate: bool = False) -> np.ndarray:
+        """Generate an embedding from a file, with optional voice isolation.
+
+        If use_vad is enabled, only speech segments are used for embedding.
+        """
+        speech = self._speech_tensor(audio_path, isolate=isolate)
+        return get_embedding(speech, device=self.device)
+
+    def _window_agreement(
+        self,
+        speech: torch.Tensor,
+        show_id: Optional[int] = None,
+    ) -> Optional[dict[int, float]]:
+        """Per-actor fraction of verification windows won (top-1 per window).
+
+        Returns None when the clip is too short to window — verification is
+        then skipped rather than counted against the candidates.
+        """
+        windows = split_windows(speech)
+        if len(windows) < 2:
+            return None
+
+        wins: dict[int, int] = {}
+        for window in windows:
+            emb = get_embedding(window, device=self.device)
+            rows = self.db.search_embeddings(emb, top_k=1, show_id=show_id)
+            if rows:
+                aid = rows[0]["actor_id"]
+                wins[aid] = wins.get(aid, 0) + 1
+
+        if not wins:
+            return None
+        return {aid: count / len(windows) for aid, count in wins.items()}
 
     # ------------------------------------------------------------------
     # Single-speaker identification
@@ -357,6 +439,7 @@ class VazamPipeline:
         top_k: int = 5,
         isolate: bool = False,
         show_id: Optional[int] = None,
+        verify: bool = True,
     ) -> list[IdentificationResult]:
         """Identify the dominant voice actor in an audio clip.
 
@@ -366,10 +449,14 @@ class VazamPipeline:
             isolate:    Run Demucs vocal isolation first.
             show_id:    If provided, restrict search to actors in this show
                         (show-aware search — dramatically improves accuracy).
+            verify:     Cross-check candidates against overlapping sub-windows
+                        of the clip; candidates that don't win a majority of
+                        windows are demoted from "confident" to "possible".
         """
-        embedding = self.embed_file(audio_path, isolate=isolate)
+        speech = self._speech_tensor(audio_path, isolate=isolate)
+        embedding = get_embedding(speech, device=self.device)
         rows = self.db.search_embeddings(embedding, top_k=top_k, show_id=show_id)
-        return [
+        results = [
             IdentificationResult(
                 actor_id=row["actor_id"],
                 actor_name=row["actor_name"],
@@ -378,6 +465,14 @@ class VazamPipeline:
             )
             for row in rows
         ]
+
+        if verify and results:
+            agreement = self._window_agreement(speech, show_id=show_id)
+            if agreement is not None:
+                for r in results:
+                    r.window_agreement = agreement.get(r.actor_id, 0.0)
+
+        return results
 
     # ------------------------------------------------------------------
     # Multi-speaker identification
