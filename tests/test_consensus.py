@@ -106,6 +106,9 @@ def test_recurring_actor_beats_per_video_interviewers(rng):
     assert float(np.dot(result.embedding, actor)) > 0.8
     assert result.quality_score > 0.7
     assert result.speech_seconds == pytest.approx(135.0)
+    # members drive channel augmentation downstream — must be the cluster itself
+    assert len(result.members) == 3
+    assert all(s.speaker_label == "SPEAKER_00" for s in result.members)
 
 
 def test_actor_in_more_videos_beats_recurring_interviewer(rng):

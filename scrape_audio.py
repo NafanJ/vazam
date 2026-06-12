@@ -13,6 +13,10 @@ For each actor with no embeddings:
      and co-panelists differ per video. Store the consensus centroid as the
      "Natural Voice" embedding with a quality score; if no cluster recurs,
      store nothing (never fall back to a blind, unvalidated embedding).
+  5. Re-embed the winning voice under simulated query conditions (reverb,
+     noise, TV-speaker band-limiting — see augment.py) and fold those into
+     the stored centroid, so references match the phone-mic-of-a-TV channel
+     they will be searched against. Disable with --no-augment.
 
 Per the acquisition plan, Demucs is intentionally skipped here (interviews
 have no music bed) and per-character clip scraping is no longer done by this
@@ -199,24 +203,28 @@ def collect_video_speakers(
     video_id: str,
     hf_token: str,
     device: str,
-) -> list[VideoSpeaker]:
+) -> tuple[list[VideoSpeaker], dict[tuple[str, str], "torch.Tensor"]]:
     """Embed every speaker found in one video.
 
     With HF_TOKEN: diarize, then embed each speaker's concatenated speech
     (capped at MAX_EMBED_SECONDS). Without a token: one whole-clip embedding
     labelled "FULL" — consensus still works but is contaminated by whoever
     else talks in the clip, so diarization is strongly preferred.
+
+    Also returns each speaker's speech tensor keyed by (video_id, label) so
+    the consensus winner can be re-embedded under channel augmentation.
     """
     import torch
 
     from pipeline import diarize, get_embedding
 
     speakers: list[VideoSpeaker] = []
+    speech_by_key: dict[tuple[str, str], torch.Tensor] = {}
 
     if hf_token:
         segments = diarize(audio_path, hf_token)
         if not segments:
-            return []
+            return [], {}
 
         signal = _load_mono_16k(audio_path)
 
@@ -240,11 +248,12 @@ def collect_video_speakers(
                 embedding=emb,
                 speech_seconds=min(total, MAX_EMBED_SECONDS),
             ))
+            speech_by_key[(video_id, label)] = speech
     else:
         signal = _load_mono_16k(audio_path)[:, : int(MAX_EMBED_SECONDS * 16000)]
         seconds = signal.shape[1] / 16000
         if seconds < MIN_SPEAKER_SECONDS:
-            return []
+            return [], {}
         emb = get_embedding(signal, device=device)
         speakers.append(VideoSpeaker(
             video_id=video_id,
@@ -252,8 +261,33 @@ def collect_video_speakers(
             embedding=emb,
             speech_seconds=seconds,
         ))
+        speech_by_key[(video_id, "FULL")] = signal
 
-    return speakers
+    return speakers, speech_by_key
+
+
+def augmented_embedding(result, speech_by_key, device: str):
+    """Fold channel-augmented embeddings of the winning cluster into its centroid.
+
+    Each member's speech is re-embedded under simulated query conditions
+    (reverb, noise, TV-speaker band-limiting — see augment.py), pulling the
+    stored reference toward the phone-mic-of-a-TV channel it will actually be
+    matched against. Only the consensus winner is augmented; the quality
+    score stays computed on clean embeddings.
+    """
+    from augment import augment_speech
+    from consensus import centroid
+    from pipeline import get_embedding
+
+    embeddings = [s.embedding for s in result.members]
+    for member in result.members:
+        speech = speech_by_key.get((member.video_id, member.speaker_label))
+        if speech is None:
+            continue
+        for variant in augment_speech(speech):
+            embeddings.append(get_embedding(variant, device=device))
+
+    return centroid(embeddings)
 
 
 # ── Core scraping logic ───────────────────────────────────────────────────────
@@ -265,6 +299,7 @@ def scrape_actor(
     hf_token: str,
     device: str,
     dry_run: bool = False,
+    augment: bool = True,
 ) -> str:
     """Run the full consensus pipeline for one actor.
 
@@ -284,6 +319,7 @@ def scrape_actor(
         return "no_videos"
 
     all_speakers: list[VideoSpeaker] = []
+    speech_by_key: dict = {}
     with tempfile.TemporaryDirectory() as tmpdir:
         for cand in videos:
             print(f"  ↓ {cand.title[:70]}  ({cand.duration:.0f}s)")
@@ -292,9 +328,12 @@ def scrape_actor(
                 print("    ✗ download failed")
                 continue
             try:
-                found = collect_video_speakers(audio_path, cand.video_id, hf_token, device)
+                found, tensors = collect_video_speakers(
+                    audio_path, cand.video_id, hf_token, device,
+                )
                 print(f"    {len(found)} speaker(s) embedded")
                 all_speakers.extend(found)
+                speech_by_key.update(tensors)
             except Exception as exc:
                 print(f"    ✗ embedding error: {exc}")
             time.sleep(SCRAPE_DELAY)
@@ -304,12 +343,17 @@ def scrape_actor(
         print("  ✗ no voice recurred across videos — skipping (nothing stored)")
         return "no_consensus"
 
+    embedding = result.embedding
+    if augment:
+        embedding = augmented_embedding(result, speech_by_key, device)
+        print("  + channel augmentation folded into centroid")
+
     id_to_url = {c.video_id: c.url for c in videos}
     source_urls = ",".join(id_to_url[v] for v in result.video_ids)
 
     emb_id = db.add_embedding(
         actor_id=actor_id,
-        embedding=result.embedding,
+        embedding=embedding,
         voice_label="Natural Voice",
         audio_source="consensus_scrape",
         verified=False,
@@ -329,6 +373,7 @@ def scrape_actors(
     limit: int = DEFAULT_LIMIT,
     force: bool = False,
     dry_run: bool = False,
+    augment: bool = True,
 ) -> None:
     """Main entry point: fetch target actors, run consensus scrape for each."""
     from db import VazamDB
@@ -382,7 +427,8 @@ def scrape_actors(
     for i, actor in enumerate(targets, 1):
         print(f"[{i}/{len(targets)}] {actor['name']}")
         outcome = scrape_actor(
-            db, actor["id"], actor["name"], hf_token, device, dry_run=dry_run,
+            db, actor["id"], actor["name"], hf_token, device,
+            dry_run=dry_run, augment=augment,
         )
         stats[outcome] += 1
         if not dry_run and i < len(targets):
@@ -422,6 +468,11 @@ def main() -> None:
         "--dry-run", action="store_true",
         help="Print search queries without downloading or storing anything",
     )
+    parser.add_argument(
+        "--no-augment", action="store_true",
+        help="Skip channel augmentation (reverb/noise/band-limit) of the "
+             "consensus voice before storing",
+    )
     args = parser.parse_args()
 
     actor_names = [args.actor] if args.actor else None
@@ -431,6 +482,7 @@ def main() -> None:
         limit=args.limit,
         force=args.force,
         dry_run=args.dry_run,
+        augment=not args.no_augment,
     )
 
 

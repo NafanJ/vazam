@@ -54,6 +54,7 @@ class ConsensusResult:
     speech_seconds: float = 0.0                 # total clean speech in cluster
     n_videos: int = 0                           # distinct videos in cluster
     video_ids: list[str] = field(default_factory=list)
+    members: list[VideoSpeaker] = field(default_factory=list)  # winning cluster
 
 
 def centroid(embeddings: list[np.ndarray]) -> np.ndarray:
@@ -142,4 +143,5 @@ def build_consensus(
         speech_seconds=round(sum(s.speech_seconds for s in best), 2),
         n_videos=len(video_ids),
         video_ids=video_ids,
+        members=list(best),
     )
