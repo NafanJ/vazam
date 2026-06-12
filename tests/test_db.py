@@ -156,6 +156,22 @@ def test_add_multiple_embeddings(db: VazamDB):
     assert db.get_embedding_count() == 3
 
 
+def test_add_embedding_with_quality_metadata(db: VazamDB, random_embedding: np.ndarray):
+    actor_id = db.add_actor("Steve Blum")
+    emb_id = db.add_embedding(
+        actor_id,
+        random_embedding,
+        source_url="https://www.youtube.com/watch?v=abc123",
+        duration_s=135.5,
+        quality_score=0.82,
+    )
+
+    rows = db._client.table("vazam_embeddings").select("*").eq("id", emb_id).execute().data
+    assert rows[0]["source_url"] == "https://www.youtube.com/watch?v=abc123"
+    assert rows[0]["duration_s"] == 135.5
+    assert rows[0]["quality_score"] == 0.82
+
+
 def test_search_embeddings_returns_list(db: VazamDB, random_embedding: np.ndarray):
     # Without a real match_embeddings RPC, the fake returns []
     results = db.search_embeddings(random_embedding, top_k=5)

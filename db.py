@@ -215,8 +215,15 @@ class VazamDB:
         audio_source: str = "",
         verified: bool = False,
         contributor_id: Optional[int] = None,
+        source_url: str = "",
+        duration_s: Optional[float] = None,
+        quality_score: Optional[float] = None,
     ) -> int:
-        """Store a 192-dim L2-normalized embedding as a pgvector vector(192)."""
+        """Store a 192-dim L2-normalized embedding as a pgvector vector(192).
+
+        source_url / duration_s / quality_score require the
+        migrations/001_embedding_quality.sql migration to be applied.
+        """
         row = self._client.table("vazam_embeddings").insert({
             "actor_id":       actor_id,
             "character_id":   character_id,
@@ -225,6 +232,9 @@ class VazamDB:
             "audio_source":   audio_source,
             "verified":       verified,
             "contributor_id": contributor_id,
+            "source_url":     source_url,
+            "duration_s":     duration_s,
+            "quality_score":  quality_score,
         }).execute()
         return row.data[0]["id"]
 
