@@ -13,6 +13,7 @@ import type {
   IdentifyResponse,
   MultiIdentifyResponse,
   Show,
+  ShowIdentifyResponse,
 } from "../types";
 
 // Override at build time via env or settings screen
@@ -71,6 +72,29 @@ export async function identifyMulti(opts: IdentifyOptions): Promise<MultiIdentif
   form.append("top_k",   String(opts.topK ?? 3));
 
   const { data } = await client.post<MultiIdentifyResponse>("/identify/multi", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
+}
+
+/**
+ * Infer which show is playing from cast co-occurrence, then identify each
+ * speaker within that show — show-aware search without asking the user.
+ * `show` is null when no cast consensus was found (e.g. a single speaker).
+ */
+export async function identifyShow(
+  opts: Omit<IdentifyOptions, "showId">,
+): Promise<ShowIdentifyResponse> {
+  const form = new FormData();
+  form.append("audio", {
+    uri:  opts.audioPath,
+    name: "recording.wav",
+    type: "audio/wav",
+  } as any);
+  form.append("isolate", String(opts.isolate ?? true));
+  form.append("top_k",   String(opts.topK ?? 3));
+
+  const { data } = await client.post<ShowIdentifyResponse>("/identify/show", form, {
     headers: { "Content-Type": "multipart/form-data" },
   });
   return data;

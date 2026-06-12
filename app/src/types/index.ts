@@ -7,6 +7,8 @@ export interface IdentificationMatch {
   actor_name: string;
   character_name: string;
   confidence: number;
+  /** Fraction of verification windows this actor won; null when the clip was too short to verify. */
+  window_agreement: number | null;
   match_level: MatchLevel;
 }
 
@@ -15,6 +17,22 @@ export interface IdentifyResponse {
 }
 
 export interface MultiIdentifyResponse {
+  speakers: Record<string, IdentificationMatch[]>;
+}
+
+export interface InferredShow {
+  show_id: number;
+  title: string;
+  /** Distinct detected speakers with a candidate in this show's cast. */
+  speakers_matched: number;
+  /** Distinct speakers detected in the clip. */
+  speakers_total: number;
+  score: number;
+}
+
+export interface ShowIdentifyResponse {
+  /** null when no cast consensus was found (single speaker or no agreement). */
+  show: InferredShow | null;
   speakers: Record<string, IdentificationMatch[]>;
 }
 
