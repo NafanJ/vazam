@@ -35,6 +35,9 @@ import time
 from typing import Optional
 
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()  # load .env into os.environ (no-op if file absent)
 
 # ── AniList GraphQL ──────────────────────────────────────────────────────────
 
