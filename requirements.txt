@@ -29,6 +29,10 @@ demucs>=4.0.0
 # line (which matches the diarization-3.1 model) reads via torchaudio.
 pyannote.audio>=3.1.0,<4.0.0
 
+# <1.0 is deliberate: huggingface_hub 1.0 removed the use_auth_token kwarg that
+# pyannote 3.x still passes to hf_hub_download. Pin until pyannote is upgraded.
+huggingface_hub>=0.23,<1.0
+
 # ── Database / vector search ─────────────────────────────────────────────────
 supabase>=2.0.0             # Supabase Python client (replaces SQLite + faiss-cpu)
 

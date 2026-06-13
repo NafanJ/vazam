@@ -62,6 +62,11 @@ load_dotenv()
 # ── Config ───────────────────────────────────────────────────────────────────
 
 DEFAULT_LIMIT    = 50
+# Invoke yt-dlp as a module via the current interpreter, not the bare "yt-dlp"
+# console script — that depends on the venv's bin being on PATH, which it isn't
+# when the script is run as `.venv/bin/python scrape_audio.py`.
+YT_DLP = [sys.executable, "-m", "yt_dlp"]
+
 SCRAPE_DELAY     = 2.5    # seconds between downloads (be polite)
 VIDEOS_PER_ACTOR = 3      # independent videos to seek consensus across
 SEARCH_RESULTS   = 5      # candidates fetched per search query
@@ -144,7 +149,7 @@ def select_videos(
 def _search_candidates(query: str) -> list[VideoCandidate]:
     """Search YouTube and return candidate metadata without downloading."""
     cmd = [
-        "yt-dlp",
+        *YT_DLP,
         f"ytsearch{SEARCH_RESULTS}:{query}",
         "--skip-download",
         "--no-playlist",
@@ -166,7 +171,7 @@ def _download_audio(candidate: VideoCandidate, output_dir: str) -> Optional[str]
     """Download the first MAX_PROCESS_SECONDS of a video as MP3."""
     out_path = os.path.join(output_dir, f"{candidate.video_id}.mp3")
     cmd = [
-        "yt-dlp",
+        *YT_DLP,
         candidate.url,
         "--extract-audio",
         "--audio-format", "mp3",
