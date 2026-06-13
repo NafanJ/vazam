@@ -67,6 +67,22 @@ DEFAULT_LIMIT    = 50
 # when the script is run as `.venv/bin/python scrape_audio.py`.
 YT_DLP = [sys.executable, "-m", "yt_dlp"]
 
+
+def _js_runtime_args() -> list[str]:
+    """yt-dlp needs a JavaScript runtime to resolve YouTube formats; without
+    one, some videos fail to download. yt-dlp auto-enables only `deno`, so if
+    only `node` is present we have to point yt-dlp at it explicitly."""
+    import shutil
+
+    if shutil.which("deno"):
+        return []  # auto-detected, nothing to add
+    if shutil.which("node"):
+        return ["--js-runtimes", "node"]
+    return []
+
+
+JS_RUNTIME_ARGS = _js_runtime_args()
+
 SCRAPE_DELAY     = 2.5    # seconds between downloads (be polite)
 VIDEOS_PER_ACTOR = 3      # independent videos to seek consensus across
 SEARCH_RESULTS   = 5      # candidates fetched per search query
@@ -150,6 +166,7 @@ def _search_candidates(query: str) -> list[VideoCandidate]:
     """Search YouTube and return candidate metadata without downloading."""
     cmd = [
         *YT_DLP,
+        *JS_RUNTIME_ARGS,
         f"ytsearch{SEARCH_RESULTS}:{query}",
         "--skip-download",
         "--no-playlist",
@@ -172,6 +189,7 @@ def _download_audio(candidate: VideoCandidate, output_dir: str) -> Optional[str]
     out_path = os.path.join(output_dir, f"{candidate.video_id}.mp3")
     cmd = [
         *YT_DLP,
+        *JS_RUNTIME_ARGS,
         candidate.url,
         "--extract-audio",
         "--audio-format", "mp3",
