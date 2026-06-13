@@ -29,8 +29,16 @@ the native scaffolding is its own task (see below).
 
 ## To run it (one-time setup)
 
-1. **Apply the migration** — run `migrations/001_embedding_quality.sql` in the
-   Supabase SQL editor. Required: embedding inserts fail without it.
+0. **System FFmpeg** — `sudo apt-get install ffmpeg`. yt-dlp needs it to extract
+   MP3 audio in the scraper, and MP3 decoding needs it too. WAV/FLAC/OGG decode
+   without it (soundfile backend), so the API/eval paths work, but the scraper
+   does not until FFmpeg is present. Verify with `ffmpeg -version`.
+   Note: `requirements.txt` pins `torch/torchaudio < 2.6` and `pyannote.audio < 4`
+   on purpose — newer releases route audio I/O through torchcodec, which breaks on
+   CPU-only boxes. Don't loosen those bounds without testing audio decode.
+1. **Apply migrations** — run `migrations/000_base_schema.sql` then
+   `001_embedding_quality.sql` in the Supabase SQL editor (or they're already
+   applied to the current project via MCP). Inserts fail without them.
 2. **`.env` in repo root:** `SUPABASE_URL`, `SUPABASE_KEY` (service role),
    `HF_TOKEN` (free HF token; accept terms at `hf.co/pyannote/voice-activity-detection`
    and `hf.co/pyannote/speaker-diarization-3.1`). Without `HF_TOKEN` the system

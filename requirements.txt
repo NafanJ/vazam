@@ -7,8 +7,13 @@ uvicorn[standard]>=0.29.0
 python-multipart>=0.0.9     # file upload support for FastAPI
 
 # ── Deep learning / audio ────────────────────────────────────────────────────
-torch>=2.1.0
-torchaudio>=2.1.0
+# Upper bound is deliberate: torchaudio >= 2.6 delegates all audio I/O to
+# torchcodec (a separate FFmpeg/CUDA-linked extension that breaks on CPU-only
+# boxes). The <2.6 line keeps the native soundfile/sox backends, which decode
+# WAV/FLAC/OGG with no extra system libs. (MP3 from the scraper still needs
+# system FFmpeg — see docs/next-steps.md.)
+torch>=2.1.0,<2.6.0
+torchaudio>=2.1.0,<2.6.0
 
 # Speaker embedding model (ECAPA-TDNN, trained on VoxCeleb1+2)
 speechbrain>=1.0.0
@@ -20,7 +25,9 @@ demucs>=4.0.0
 # Requires a free HuggingFace token (set HF_TOKEN env var)
 # Accept model terms at: https://hf.co/pyannote/voice-activity-detection
 #                         https://hf.co/pyannote/speaker-diarization-3.1
-pyannote.audio>=3.1.0
+# <4.0 is deliberate: pyannote.audio 4.x reads audio via torchcodec; the 3.x
+# line (which matches the diarization-3.1 model) reads via torchaudio.
+pyannote.audio>=3.1.0,<4.0.0
 
 # ── Database / vector search ─────────────────────────────────────────────────
 supabase>=2.0.0             # Supabase Python client (replaces SQLite + faiss-cpu)
