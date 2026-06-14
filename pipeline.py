@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -163,7 +164,7 @@ def isolate_vocals(input_path: str, output_dir: str = "separated") -> str:
     try:
         subprocess.run(
             [
-                "python", "-m", "demucs",
+                sys.executable, "-m", "demucs",
                 "--two-stems=vocals",
                 "-n", "htdemucs_ft",
                 "-o", output_dir,
@@ -176,8 +177,8 @@ def isolate_vocals(input_path: str, output_dir: str = "separated") -> str:
         vocals_path = os.path.join(output_dir, "htdemucs_ft", basename, "vocals.wav")
         if os.path.exists(vocals_path):
             return vocals_path
-    except subprocess.CalledProcessError:
-        pass  # fall through to original file
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass  # demucs missing or failed → fall through to original file
 
     return input_path
 
