@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -72,8 +73,6 @@ def _js_runtime_args() -> list[str]:
     """yt-dlp needs a JavaScript runtime to resolve YouTube formats; without
     one, some videos fail to download. yt-dlp auto-enables only `deno`, so if
     only `node` is present we have to point yt-dlp at it explicitly."""
-    import shutil
-
     if shutil.which("deno"):
         return []  # auto-detected, nothing to add
     if shutil.which("node"):
@@ -83,13 +82,27 @@ def _js_runtime_args() -> list[str]:
 
 JS_RUNTIME_ARGS = _js_runtime_args()
 
+# YouTube throttles (and ultimately blocks) downloads when yt-dlp can't solve
+# the player's "n challenge". The solver needs a remote EJS component that
+# yt-dlp fetches from its GitHub repo on demand; without it, throttling shows
+# up as intermittent download failures. Only enabled when a JS runtime exists
+# (the solver runs the fetched script through it).
+_HAS_JS_RUNTIME = bool(JS_RUNTIME_ARGS) or bool(shutil.which("deno"))
+CHALLENGE_SOLVER_ARGS = (
+    ["--remote-components", "ejs:github"] if _HAS_JS_RUNTIME else []
+)
+
+# Network args common to search + download. Combined here so both yt-dlp
+# invocations resolve formats the same way.
+YT_NET_ARGS = [*JS_RUNTIME_ARGS, *CHALLENGE_SOLVER_ARGS]
+
 SCRAPE_DELAY     = 2.5    # seconds between downloads (be polite)
 VIDEOS_PER_ACTOR = 3      # independent videos to seek consensus across
 SEARCH_RESULTS   = 5      # candidates fetched per search query
 
 MIN_VIDEO_SECONDS   = 120   # too short → likely a clip compilation / short
-MAX_VIDEO_SECONDS   = 3600  # too long → skip
-MAX_PROCESS_SECONDS = 600   # only download/process the first 10 minutes
+MAX_VIDEO_SECONDS   = 1800  # > 30 min → likely a long stream/VOD, skip
+MAX_PROCESS_SECONDS = 240   # only download/process the first 4 minutes
 
 MIN_SPEAKER_SECONDS = 8.0   # diarized speakers with less speech are ignored
 MAX_EMBED_SECONDS   = 60.0  # cap audio per speaker embedding (compute bound)
@@ -166,7 +179,7 @@ def _search_candidates(query: str) -> list[VideoCandidate]:
     """Search YouTube and return candidate metadata without downloading."""
     cmd = [
         *YT_DLP,
-        *JS_RUNTIME_ARGS,
+        *YT_NET_ARGS,
         f"ytsearch{SEARCH_RESULTS}:{query}",
         "--skip-download",
         "--no-playlist",
@@ -189,7 +202,7 @@ def _download_audio(candidate: VideoCandidate, output_dir: str) -> Optional[str]
     out_path = os.path.join(output_dir, f"{candidate.video_id}.mp3")
     cmd = [
         *YT_DLP,
-        *JS_RUNTIME_ARGS,
+        *YT_NET_ARGS,
         candidate.url,
         "--extract-audio",
         "--audio-format", "mp3",
