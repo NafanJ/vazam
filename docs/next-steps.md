@@ -40,9 +40,14 @@ the native scaffolding is its own task (see below).
    `001_embedding_quality.sql` in the Supabase SQL editor (or they're already
    applied to the current project via MCP). Inserts fail without them.
 2. **`.env` in repo root:** `SUPABASE_URL`, `SUPABASE_KEY` (service role),
-   `HF_TOKEN` (free HF token; accept terms at `hf.co/pyannote/voice-activity-detection`
-   and `hf.co/pyannote/speaker-diarization-3.1`). Without `HF_TOKEN` the system
-   degrades: no diarization → no show inference, weaker scraping.
+   `HF_TOKEN` (free HF token). Accept terms for **all three** gated pyannote repos
+   — they are separate gates: `hf.co/pyannote/speaker-diarization-3.1` and
+   `hf.co/pyannote/segmentation-3.0` (diarization → scraping + show inference) **and**
+   `hf.co/pyannote/segmentation` (the *original* — powers VAD, used by single-speaker
+   `identify()` to trim to speech). Missing the last one doesn't error loudly: VAD
+   silently falls back to embedding the whole clip, which tanks `identify()` accuracy
+   (measured: 0.88 → 0.10 on the same clip). Without `HF_TOKEN` entirely the system
+   degrades further: no diarization → no show inference, weaker scraping.
 3. **Start + seed + scrape:**
 
    ```bash
@@ -56,9 +61,49 @@ the native scaffolding is its own task (see below).
 4. **Test in the browser:** `/docs` → `POST /identify` with any clip;
    `POST /identify/show` with a two-character scene.
 
+## Live validation (June 2026) — proven end-to-end on real data
+
+The pipeline has now been run for real, not just unit-tested. Current Supabase
+project (`rpmcsbgtsvpoczpycozr`) holds **8 consensus embeddings**: Steve Blum +
+7 of 10 Attack on Titan main-cast seiyuu (Eren/Yuuki Kaji, Mikasa→miss,
+Armin/Marina Inoue, Levi/Hiroshi Kamiya, Hange/Romi Park, Annie/Yuu Shimamura,
+Reiner/Yoshimasa Hosoya, Connie/Hiro Shimono; Erwin/Daisuke Ono, Jean/Kishou
+Taniyama, Mikasa/Yui Ishikawa did not reach consensus). Quality scores 0.57–0.72.
+
+What the validation runs showed:
+
+- **References are sound.** A *held-out* Yuuki Kaji interview (not a source video)
+  matched the stored Kaji embedding at **cosine 0.884**, confidently, with all 3
+  verification windows agreeing — impostors sat at ≤0.66 and won zero windows.
+- **`identify/show` works on raw anime.** A real AoT scene (Eren↔Mikasa, Japanese,
+  no hints) correctly inferred **"Attack on Titan"** via cast co-occurrence
+  (2/3 speakers matched). The co-occurrence vote is the robust layer — it locked
+  the show even though individual character-voice scores were middling.
+- **Open-set gap, quantified:** ~**0.88** on matched-condition audio (interview vs
+  interview reference) vs ~**0.52** on character voices (Eren mid-scene vs the
+  interview "Natural Voice" reference). This is the concrete argument for storing
+  per-character embeddings on marquee roles (the `voice_label` mechanism already
+  exists; see Next Steps #4).
+
+Runtime fixes landed this session (all committed/pushed): yt-dlp EJS challenge
+solver + shorter download sections (`1f57695`), Japanese-language search queries
+`--lang {en,ja,both}` for seiyuu (`ea120f1`), and `isolate_vocals` using
+`sys.executable` with graceful fallback (`1816ada`). Dependency pins
+(torch/torchaudio <2.6, pyannote <4, huggingface_hub <1) and the VAD gate are
+both required and now in place.
+
+**Why 3 AoT leads missed — it's a linking limit, not a search limit.** Re-running
+the misses with `--lang both` *did* surface clean solo Japanese interviews, but
+their clips diarized to one speaker each and those single embeddings didn't
+cluster across videos (cross-video cosine < the 0.60 consensus link threshold —
+compressed YouTube audio from different mics drifts apart). Levers: lower the link
+threshold (0.60 → ~0.55, A/B for false-links) or augment *before* clustering so
+cross-condition takes pull together. Deferred — 7/10 is enough for show inference.
+
 ## Next steps (in order)
 
-1. **Run the setup above** and prove the loop on one show.
+1. ~~Run the setup and prove the loop on one show.~~ ✅ **Done** (see Live
+   validation above — seeded, scraped, and identified end-to-end on real clips).
 2. **Record benchmark clips** — the one task only a human can do. ~20 clips per show
    across 3–5 shows, **phone mic pointed at a playing TV, not clean rips**
    (protocol in `benchmark/README.md`). Then:
@@ -74,14 +119,22 @@ the native scaffolding is its own task (see below).
    `POSSIBLE_THRESHOLD = 0.50` in `pipeline.py` are uncalibrated guesses; tune them
    against benchmark numbers. Expect them to need raising as the DB grows
    (impostor scores rise with N); consider AS-norm score normalization if precision
-   degrades at scale.
-4. **Data plan build order** (from `data-acquisition-plan.md`):
+   degrades at scale. Also tune the **consensus link threshold** (0.60 in
+   `consensus.py`) — it cost 3 AoT leads (see Live validation); try 0.55 and watch
+   for false-links.
+4. **Per-character embeddings for marquee roles.** Validation measured a real
+   ~0.88→0.52 drop from interview "Natural Voice" references to in-character voices.
+   The `voice_label` column already supports multiple embeddings per actor — add
+   character-voice embeddings lazily for top-billed roles (stays within the plan's
+   anti-goal of *not* bulk-scraping character clips). Re-test with `identify/show`
+   on the same AoT scene to confirm the lift before scaling.
+5. **Data plan build order** (from `data-acquisition-plan.md`):
    entity-resolution schema change (cross-source actor IDs — do first, painful to
    retrofit) → TMDB resolver alongside AniList → `show_ingestion_status` +
    demand-driven background ingestion → overnight warm-start of top shows.
-5. **Generate RN native projects** (`ios/`, `android/`) so the app actually builds;
+6. **Generate RN native projects** (`ios/`, `android/`) so the app actually builds;
    point the client at the dev machine's LAN IP (`setBaseUrl`) instead of localhost.
-6. **Cleanup:** delete or rewrite legacy `main.py` — it still imports FAISS
+7. **Cleanup:** delete or rewrite legacy `main.py` — it still imports FAISS
    (pre-Supabase era) and won't run with current requirements.
 
 ## Things to remember

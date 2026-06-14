@@ -27,6 +27,9 @@ venv/
 .cache/
 pretrained_models/
 
+# Demucs vocal-isolation output (isolate_vocals default output_dir)
+separated/
+
 # OS
 .DS_Store
 Thumbs.db
