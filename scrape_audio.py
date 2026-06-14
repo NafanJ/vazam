@@ -29,6 +29,7 @@ Usage
     python scrape_audio.py --limit 20           # cap actors per run
     python scrape_audio.py --force              # re-scrape even if embeddings exist
     python scrape_audio.py --dry-run            # print queries only, no network
+    python scrape_audio.py --lang both --actor "Yuuki Kaji"  # JP seiyuu queries
 
 Environment variables
 ---------------------
@@ -107,11 +108,38 @@ MAX_PROCESS_SECONDS = 240   # only download/process the first 4 minutes
 MIN_SPEAKER_SECONDS = 8.0   # diarized speakers with less speech are ignored
 MAX_EMBED_SECONDS   = 60.0  # cap audio per speaker embedding (compute bound)
 
-QUERY_TEMPLATES = [
-    '"{name}" voice actor interview',
-    '"{name}" voice actor convention panel',
-    '"{name}" voice actor podcast',
-]
+QUERY_TEMPLATES = {
+    "en": [
+        '"{name}" voice actor interview',
+        '"{name}" voice actor convention panel',
+        '"{name}" voice actor podcast',
+    ],
+    # Japanese seiyuu interview / radio / talk content. The name stays romaji
+    # (that's what AniList gives us); YouTube matches it fuzzily. Seiyuu ラジオ
+    # shows in particular are tight 1–2 person recordings that produce far
+    # cleaner consensus than English-language multi-seiyuu convention panels.
+    "ja": [
+        "{name} 声優 インタビュー",
+        "{name} 声優 ラジオ",
+        "{name} 声優 トーク",
+    ],
+}
+
+
+def build_queries(actor_name: str, lang: str = "en") -> list[str]:
+    """Expand query templates for the requested language(s).
+
+    ``lang`` is one of ``"en"``, ``"ja"``, or ``"both"``. ``"both"``
+    interleaves English and Japanese templates so the round-robin in
+    ``select_videos`` alternates languages — mixing source pools, which also
+    strengthens the cross-video independence that consensus relies on.
+    """
+    keys = ["en", "ja"] if lang == "both" else [lang]
+    queries: list[str] = []
+    for row in zip(*(QUERY_TEMPLATES[k] for k in keys)):
+        for tmpl in row:
+            queries.append(tmpl.format(name=actor_name))
+    return queries
 
 
 @dataclass
@@ -336,12 +364,13 @@ def scrape_actor(
     device: str,
     dry_run: bool = False,
     augment: bool = True,
+    lang: str = "en",
 ) -> str:
     """Run the full consensus pipeline for one actor.
 
     Returns one of: "ok", "no_videos", "no_consensus", "dry_run".
     """
-    queries = [t.format(name=actor_name) for t in QUERY_TEMPLATES]
+    queries = build_queries(actor_name, lang)
     for q in queries:
         print(f"  Query : {q}")
     if dry_run:
@@ -410,6 +439,7 @@ def scrape_actors(
     force: bool = False,
     dry_run: bool = False,
     augment: bool = True,
+    lang: str = "en",
 ) -> None:
     """Main entry point: fetch target actors, run consensus scrape for each."""
     from db import VazamDB
@@ -464,7 +494,7 @@ def scrape_actors(
         print(f"[{i}/{len(targets)}] {actor['name']}")
         outcome = scrape_actor(
             db, actor["id"], actor["name"], hf_token, device,
-            dry_run=dry_run, augment=augment,
+            dry_run=dry_run, augment=augment, lang=lang,
         )
         stats[outcome] += 1
         if not dry_run and i < len(targets):
@@ -509,6 +539,13 @@ def main() -> None:
         help="Skip channel augmentation (reverb/noise/band-limit) of the "
              "consensus voice before storing",
     )
+    parser.add_argument(
+        "--lang", choices=["en", "ja", "both"], default="en",
+        help="Search-query language: en (default), ja (Japanese seiyuu "
+             "interview/radio/talk terms), or both (interleaved). Use ja/both "
+             "for Japanese voice actors — English queries surface multi-seiyuu "
+             "panels that rarely reach consensus.",
+    )
     args = parser.parse_args()
 
     actor_names = [args.actor] if args.actor else None
@@ -519,6 +556,7 @@ def main() -> None:
         force=args.force,
         dry_run=args.dry_run,
         augment=not args.no_augment,
+        lang=args.lang,
     )
 
 
