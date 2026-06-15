@@ -42,8 +42,7 @@ vazam/
 ├── eval.py            Accuracy benchmark harness (labelled clips → top-k metrics)
 ├── seed.py            AniList GraphQL seeder (metadata only, no audio)
 ├── embed_batch.py     Bulk audio-to-embedding importer (CLI tool)
-├── main.py            ⚠ LEGACY standalone demo — still imports FAISS directly,
-│                      predates the Supabase migration; do not pattern-match on it
+├── add_character_voice.py  Lazy per-character voice embedding ingestion (CLI tool)
 ├── requirements.txt   Python dependencies
 ├── migrations/        SQL migrations (apply via Supabase SQL editor / db push)
 │   └── 001_embedding_quality.sql
@@ -243,6 +242,22 @@ Walks `samples/<Actor Name>/<Voice Label>/*.{wav,mp3}` and stores one embedding 
 python embed_batch.py samples/ --dry-run
 python embed_batch.py samples/ --isolate --verified
 ```
+
+### `add_character_voice.py` — Lazy Per-Character Voice Ingestion
+
+Stores a *character-voice* embedding (e.g. Yuuki Kaji **as Eren Yeager**) for one marquee role from one or more curated YouTube clips or local files — closing the open-set gap between an actor's "Natural Voice" reference and their in-character voice. Deliberately lazy/selective (per the acquisition-plan anti-goal, character clips are never bulk-scraped).
+
+Per source: download (or load local) → optional Demucs isolation (`--isolate`, recommended for anime clips with a music bed) → diarize → embed the **dominant speaker** (the character, in a voice-line compilation). With ≥2 sources, the per-source dominant-speaker embeddings must agree (mean pairwise cosine ≥ `MIN_CLIP_AGREEMENT = 0.55`) or nothing is stored — this rejects clips where the "dominant speaker" isn't consistently the character. Stored as `voice_label=<character>` with `character_id` linked (so results name the character), centroid + channel augmentation folded in (disable with `--no-augment`); cross-source agreement becomes the `quality_score`.
+
+```bash
+python add_character_voice.py --actor "Yuuki Kaji" --character "Eren Yeager" \
+    --show "Attack on Titan" --isolate \
+    --url <compilation1> --url <compilation2>
+python add_character_voice.py --actor "Steve Blum" --character "Spike Spiegel" \
+    --file spike.wav --no-augment --dry-run
+```
+
+Reuses the scraper's download/audio/augment helpers and `consensus.centroid` / `mean_pairwise_cosine`. Measured lift (Eren↔Mikasa scene, the speaker's top match): `Natural Voice` 0.525 → `Eren Yeager` 0.686, and the margin over the nearest other actor went +0.020 → +0.181 (near-tie → decisive).
 
 ## API Reference
 

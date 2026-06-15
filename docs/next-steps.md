@@ -64,7 +64,8 @@ the native scaffolding is its own task (see below).
 ## Live validation (June 2026) — proven end-to-end on real data
 
 The pipeline has now been run for real, not just unit-tested. Current Supabase
-project (`rpmcsbgtsvpoczpycozr`) holds **8 consensus embeddings**: Steve Blum +
+project (`rpmcsbgtsvpoczpycozr`) holds **8 consensus "Natural Voice" embeddings**
+(+ 1 per-character `Eren Yeager` embedding, see below): Steve Blum +
 7 of 10 Attack on Titan main-cast seiyuu (Eren/Yuuki Kaji, Mikasa→miss,
 Armin/Marina Inoue, Levi/Hiroshi Kamiya, Hange/Romi Park, Annie/Yuu Shimamura,
 Reiner/Yoshimasa Hosoya, Connie/Hiro Shimono; Erwin/Daisuke Ono, Jean/Kishou
@@ -84,6 +85,15 @@ What the validation runs showed:
   interview "Natural Voice" reference). This is the concrete argument for storing
   per-character embeddings on marquee roles (the `voice_label` mechanism already
   exists; see Next Steps #4).
+- **Per-character embedding closes the gap (proven).** Added an `Eren Yeager`
+  character embedding for Yuuki Kaji via the new `add_character_voice.py` (two
+  Eren voice-line compilations, Demucs-isolated, cross-source agreement 0.781).
+  Re-running the same Eren↔Mikasa scene, the Eren speaker's top match rose from
+  **0.525** (`Natural Voice`) to **0.686** (`Eren Yeager`), and — the real win —
+  the margin over the nearest *other* actor went **+0.020 → +0.181**, flipping a
+  coin-flip into a decisive ID. Because the embedding is linked to its
+  `character_id`, `identify_show` now reports "Yuuki Kaji **as Eren Yeager**"
+  instead of "Natural Voice", and still infers Attack on Titan (2/3 speakers).
 
 Runtime fixes landed this session (all committed/pushed): yt-dlp EJS challenge
 solver + shorter download sections (`1f57695`), Japanese-language search queries
@@ -122,20 +132,22 @@ cross-condition takes pull together. Deferred — 7/10 is enough for show infere
    degrades at scale. Also tune the **consensus link threshold** (0.60 in
    `consensus.py`) — it cost 3 AoT leads (see Live validation); try 0.55 and watch
    for false-links.
-4. **Per-character embeddings for marquee roles.** Validation measured a real
-   ~0.88→0.52 drop from interview "Natural Voice" references to in-character voices.
-   The `voice_label` column already supports multiple embeddings per actor — add
-   character-voice embeddings lazily for top-billed roles (stays within the plan's
-   anti-goal of *not* bulk-scraping character clips). Re-test with `identify/show`
-   on the same AoT scene to confirm the lift before scaling.
+4. **Per-character embeddings for marquee roles.** ✅ **Tool built + proven on
+   Eren** (`add_character_voice.py`; see Live validation — 0.525→0.686 lift, margin
+   +0.020→+0.181). Remaining: *scale it* to the other distinctive AoT leads (Levi /
+   Hiroshi Kamiya is the next obvious one) and to other shows, lazily and top-billed
+   only (stays within the plan's anti-goal of bulk-scraping character clips). Each
+   add is self-measuring — re-run `identify/show` on a scene with that character.
 5. **Data plan build order** (from `data-acquisition-plan.md`):
    entity-resolution schema change (cross-source actor IDs — do first, painful to
    retrofit) → TMDB resolver alongside AniList → `show_ingestion_status` +
    demand-driven background ingestion → overnight warm-start of top shows.
 6. **Generate RN native projects** (`ios/`, `android/`) so the app actually builds;
    point the client at the dev machine's LAN IP (`setBaseUrl`) instead of localhost.
-7. **Cleanup:** delete or rewrite legacy `main.py` — it still imports FAISS
-   (pre-Supabase era) and won't run with current requirements.
+7. ~~**Cleanup:** delete or rewrite legacy `main.py`.~~ ✅ **Done** — removed (it
+   imported FAISS from the pre-Supabase era and could not run). `README.md` is still
+   broadly stale (describes FAISS/SQLite/`DB_PATH`) — a full rewrite to match
+   `CLAUDE.md` is a separate, low-priority pass.
 
 ## Things to remember
 
