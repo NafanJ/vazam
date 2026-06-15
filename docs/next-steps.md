@@ -65,7 +65,7 @@ the native scaffolding is its own task (see below).
 
 The pipeline has now been run for real, not just unit-tested. Current Supabase
 project (`rpmcsbgtsvpoczpycozr`) holds **8 consensus "Natural Voice" embeddings**
-(+ 1 per-character `Eren Yeager` embedding, see below): Steve Blum +
+(+ 2 per-character embeddings — `Eren Yeager` and `Levi`, see below): Steve Blum +
 7 of 10 Attack on Titan main-cast seiyuu (Eren/Yuuki Kaji, Mikasa→miss,
 Armin/Marina Inoue, Levi/Hiroshi Kamiya, Hange/Romi Park, Annie/Yuu Shimamura,
 Reiner/Yoshimasa Hosoya, Connie/Hiro Shimono; Erwin/Daisuke Ono, Jean/Kishou
@@ -94,6 +94,24 @@ What the validation runs showed:
   coin-flip into a decisive ID. Because the embedding is linked to its
   `character_id`, `identify_show` now reports "Yuuki Kaji **as Eren Yeager**"
   instead of "Natural Voice", and still infers Attack on Titan (2/3 speakers).
+- **Levi (Hiroshi Kamiya) — even starker: the character embedding *rescues a wrong
+  ID*.** Added a `Levi` embedding from one clean line-cut source (`Q_iIY3MVorc`;
+  the second source, a rapid-cut 100連発 MAD, fragmented under diarization to no
+  ≥8s speaker and was dropped — so it stored single-source, quality n/a). On the
+  ep14 courtroom scene the Levi speaker matched the new `Levi` embedding at **0.917**
+  (confident), while Kamiya's `Natural Voice` reference *didn't even reach the top 5*
+  — with Natural Voice alone the top match was **Yuuki Kaji `[Eren Yeager]` at 0.550,
+  the wrong actor**. Levi's gravelly voice is far enough from his natural voice that
+  the per-character embedding is the difference between a correct ID and a confident
+  *mis*-ID. (Note: `identify_show` returned no show consensus *on this clip* — the
+  violent beating scene has only one cleanly-voiced speaker, Eren is grunting; cast
+  voting needs ≥2. Conversation scenes like Eren↔Mikasa vote fine.)
+- **Sourcing gotcha (worth remembering):** Japanese YouTube has many "声真似" clips
+  that are *fans impersonating* the character, not real seiyuu audio — those would
+  poison a character embedding. The tell: 声真似講座/声真似ボイス/シチュエーションボイス
+  = fan performance (avoid); セリフ切り抜き = actual show line-cuts (use). The
+  cross-source agreement guard would likely reject a fan clip paired with a real one,
+  but the safe move is to pick `セリフ切り抜き … 声マネ練習用` line-cut sources.
 
 Runtime fixes landed this session (all committed/pushed): yt-dlp EJS challenge
 solver + shorter download sections (`1f57695`), Japanese-language search queries
@@ -132,12 +150,14 @@ cross-condition takes pull together. Deferred — 7/10 is enough for show infere
    degrades at scale. Also tune the **consensus link threshold** (0.60 in
    `consensus.py`) — it cost 3 AoT leads (see Live validation); try 0.55 and watch
    for false-links.
-4. **Per-character embeddings for marquee roles.** ✅ **Tool built + proven on
-   Eren** (`add_character_voice.py`; see Live validation — 0.525→0.686 lift, margin
-   +0.020→+0.181). Remaining: *scale it* to the other distinctive AoT leads (Levi /
-   Hiroshi Kamiya is the next obvious one) and to other shows, lazily and top-billed
-   only (stays within the plan's anti-goal of bulk-scraping character clips). Each
-   add is self-measuring — re-run `identify/show` on a scene with that character.
+4. **Per-character embeddings for marquee roles.** ✅ **Tool built + proven on Eren
+   *and* Levi** (`add_character_voice.py`; see Live validation — Eren 0.525→0.686,
+   Levi 0.917 rescuing a mis-ID). Remaining: *scale it* to the other distinctive AoT
+   leads (Annie/Yuu Shimamura, Hange/Romi Park — the same uploader behind the clean
+   Levi/Eren line-cuts has `セリフ切り抜き … 声マネ練習用` clips for both, plus Erwin)
+   and to other shows, lazily and top-billed only (stays within the plan's anti-goal
+   of bulk-scraping character clips). Each add is self-measuring — re-run
+   `identify/show` on a *conversation* scene with that character.
 5. **Data plan build order** (from `data-acquisition-plan.md`):
    entity-resolution schema change (cross-source actor IDs — do first, painful to
    retrofit) → TMDB resolver alongside AniList → `show_ingestion_status` +
