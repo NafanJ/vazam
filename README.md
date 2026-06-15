@@ -19,7 +19,6 @@ Audio clip
 
 ```
 vazam/
-├── main.py        standalone demo script (single-file quick test)
 ├── pipeline.py    full pipeline module: isolation → VAD → diarize → embed → search
 ├── db.py          SQLite database: actors, shows, characters, embeddings
 ├── api.py         FastAPI HTTP backend
