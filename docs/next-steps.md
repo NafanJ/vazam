@@ -64,12 +64,14 @@ the native scaffolding is its own task (see below).
 ## Live validation (June 2026) — proven end-to-end on real data
 
 The pipeline has now been run for real, not just unit-tested. Current Supabase
-project (`rpmcsbgtsvpoczpycozr`) holds **8 consensus "Natural Voice" embeddings**
-(+ 2 per-character embeddings — `Eren Yeager` and `Levi`, see below): Steve Blum +
-7 of 10 Attack on Titan main-cast seiyuu (Eren/Yuuki Kaji, Mikasa→miss,
+project (`rpmcsbgtsvpoczpycozr`) holds **11 embeddings**: 8 consensus "Natural
+Voice" (Steve Blum + 7 of 10 Attack on Titan main-cast seiyuu — Eren/Yuuki Kaji,
 Armin/Marina Inoue, Levi/Hiroshi Kamiya, Hange/Romi Park, Annie/Yuu Shimamura,
 Reiner/Yoshimasa Hosoya, Connie/Hiro Shimono; Erwin/Daisuke Ono, Jean/Kishou
-Taniyama, Mikasa/Yui Ishikawa did not reach consensus). Quality scores 0.57–0.72.
+Taniyama, Mikasa/Yui Ishikawa missed consensus) plus **3 per-character voices**
+(`Eren Yeager`, `Levi`, `Mikasa Ackerman` — see below). Natural-voice quality
+scores 0.57–0.72. Note: the Mikasa character voice *recovered* Yui Ishikawa, who
+the consensus scraper had missed — she went from zero embeddings to identifiable.
 
 What the validation runs showed:
 
@@ -106,12 +108,36 @@ What the validation runs showed:
   *mis*-ID. (Note: `identify_show` returned no show consensus *on this clip* — the
   violent beating scene has only one cleanly-voiced speaker, Eren is grunting; cast
   voting needs ≥2. Conversation scenes like Eren↔Mikasa vote fine.)
+- **Mikasa (Yui Ishikawa) — recovers a consensus miss.** Yui Ishikawa had *no*
+  embedding (one of the 3 consensus misses). Added a `Mikasa Ackerman` voice from a
+  single clean line-cut (`WsXnZs9ahtk`; a second source, the ep7 "speech" clip,
+  diarized to a non-Mikasa dominant speaker — agreement 0.20 — and was correctly
+  rejected by the guard, so it stored single-source). On the Eren↔Mikasa scene the
+  Mikasa speaker now matches **`Mikasa Ackerman` at 0.690**, beating the prior
+  (wrong) top match **Marina Inoue `[Natural Voice]` 0.554** — so the character
+  embedding both makes a previously-unknown actor identifiable *and* fixes a mis-ID.
+  The Eren speaker stayed stable at 0.685 in the same run.
+- **Blind test caught the gap in the wild.** A random Connie (Hiro Shimono) clip the
+  user supplied: `identify()` ranked **Hiro Shimono #1 — correct** — but at **0.432**,
+  just under the 0.50 claim threshold, because we only had his *Natural Voice* and
+  Connie is a character voice. So top-1 was right, but the system wouldn't *claim* it.
+  Exactly the per-character gap; a `Connie Springer` embedding would push it over.
 - **Sourcing gotcha (worth remembering):** Japanese YouTube has many "声真似" clips
   that are *fans impersonating* the character, not real seiyuu audio — those would
   poison a character embedding. The tell: 声真似講座/声真似ボイス/シチュエーションボイス
   = fan performance (avoid); セリフ切り抜き = actual show line-cuts (use). The
   cross-source agreement guard would likely reject a fan clip paired with a real one,
   but the safe move is to pick `セリフ切り抜き … 声マネ練習用` line-cut sources.
+- **Dominant-speaker selection has a blind spot: ensemble characters.** The tool
+  picks the *dominant* speaker, which is the character in a single-character
+  compilation — great for leads who carry scenes (Eren/Levi/Mikasa). But comic-relief
+  / ensemble characters (Connie) never speak alone: their clips are group scenes
+  (Sasha/Connie/Jean) where someone else dominates, or radio shows (= the actor's
+  *natural* voice, which we already have). Proposed fix: an optional
+  `--select nearest-natural` mode that picks the diarized speaker closest to the
+  actor's stored Natural Voice instead of the dominant one — works for any character
+  whose voice still *ranks* against the natural reference (Connie did, at 0.432).
+  Not yet built.
 
 Runtime fixes landed this session (all committed/pushed): yt-dlp EJS challenge
 solver + shorter download sections (`1f57695`), Japanese-language search queries
@@ -150,14 +176,20 @@ cross-condition takes pull together. Deferred — 7/10 is enough for show infere
    degrades at scale. Also tune the **consensus link threshold** (0.60 in
    `consensus.py`) — it cost 3 AoT leads (see Live validation); try 0.55 and watch
    for false-links.
-4. **Per-character embeddings for marquee roles.** ✅ **Tool built + proven on Eren
-   *and* Levi** (`add_character_voice.py`; see Live validation — Eren 0.525→0.686,
-   Levi 0.917 rescuing a mis-ID). Remaining: *scale it* to the other distinctive AoT
-   leads (Annie/Yuu Shimamura, Hange/Romi Park — the same uploader behind the clean
-   Levi/Eren line-cuts has `セリフ切り抜き … 声マネ練習用` clips for both, plus Erwin)
-   and to other shows, lazily and top-billed only (stays within the plan's anti-goal
-   of bulk-scraping character clips). Each add is self-measuring — re-run
-   `identify/show` on a *conversation* scene with that character.
+4. **Per-character embeddings for marquee roles.** ✅ **Tool built + proven on Eren,
+   Levi, *and* Mikasa** (`add_character_voice.py`; see Live validation — Eren
+   0.525→0.686, Levi 0.917 rescuing a mis-ID, Mikasa 0.690 recovering a missed actor).
+   Remaining work, in rough order:
+   - **Scale to more leads** — Annie/Yuu Shimamura, Hange/Romi Park (the same uploader
+     behind the clean Levi/Eren/Mikasa line-cuts has `セリフ切り抜き … 声マネ練習用` clips
+     for both, plus Erwin), then other shows. Lazily, top-billed only (anti-goal: never
+     bulk-scrape character clips). Each add is self-measuring — re-run `identify/show`
+     on a *conversation* scene with that character.
+   - **Build `--select nearest-natural`** (see Live validation) so the tool reaches
+     *ensemble* characters like Connie, who never carry a scene solo and so defeat the
+     current dominant-speaker selection. Picks the diarized speaker nearest the actor's
+     stored Natural Voice instead. ~15 lines + tests; then ingest Connie from a group
+     clip and confirm the blind-test clip flips from 0.432 (no claim) to a confident ID.
 5. **Data plan build order** (from `data-acquisition-plan.md`):
    entity-resolution schema change (cross-source actor IDs — do first, painful to
    retrofit) → TMDB resolver alongside AniList → `show_ingestion_status` +

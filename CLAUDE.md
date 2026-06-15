@@ -257,7 +257,7 @@ python add_character_voice.py --actor "Steve Blum" --character "Spike Spiegel" \
     --file spike.wav --no-augment --dry-run
 ```
 
-Reuses the scraper's download/audio/augment helpers and `consensus.centroid` / `mean_pairwise_cosine`. Measured lift (Eren↔Mikasa scene, the speaker's top match): `Natural Voice` 0.525 → `Eren Yeager` 0.686, and the margin over the nearest other actor went +0.020 → +0.181 (near-tie → decisive).
+Reuses the scraper's download/audio/augment helpers and `consensus.centroid` / `mean_pairwise_cosine`. Validated on three AoT leads (the speaker's top match on a real scene): **Eren** `Natural Voice` 0.525 → `Eren Yeager` 0.686 (margin +0.020 → +0.181, near-tie → decisive); **Levi** natural voice didn't even rank → `Levi` 0.917 (rescued a confident *mis*-ID); **Mikasa** 0.690, beating a prior wrong match *and* recovering a seiyuu the consensus scraper had missed. Limitation: dominant-speaker selection works for leads who carry scenes but not ensemble characters who never speak solo (e.g. Connie) — see `docs/next-steps.md` #4 (`--select nearest-natural`).
 
 ## API Reference
 
