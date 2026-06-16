@@ -47,6 +47,38 @@ def test_identify_stream_emits_progress_and_result(api_client):
     assert isinstance(events[-1]["results"], list)
 
 
+def test_enroll_adds_sample_to_fingerprint(api_client):
+    actor_id = api_client.post("/actors", json={"name": "Mayumi Tanaka"}).json()["id"]
+    api_client.post(
+        f"/actors/{actor_id}/embeddings",
+        files={"audio": ("a.wav", make_wav_bytes(), "audio/wav")},
+        data={"voice_label": "Luffy"},
+    )
+    # Enroll a second clip into the same fingerprint.
+    resp = api_client.post(
+        "/enroll",
+        files={"audio": ("b.wav", make_wav_bytes(), "audio/wav")},
+        data={"actor_id": str(actor_id), "voice_label": "Luffy", "isolate": "false"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True and body["voice_label"] == "Luffy"
+    assert body["samples"] == 2                       # now two reference clips
+
+    voices = api_client.get("/voices").json()
+    luffy = [v for v in voices if v["voice_label"] == "Luffy"][0]
+    assert luffy["samples"] == 2 and luffy["actor_id"] == actor_id
+
+
+def test_enroll_unknown_actor_404(api_client):
+    resp = api_client.post(
+        "/enroll",
+        files={"audio": ("b.wav", make_wav_bytes(), "audio/wav")},
+        data={"actor_id": "99999", "voice_label": "X", "isolate": "false"},
+    )
+    assert resp.status_code == 404
+
+
 # ── /health ───────────────────────────────────────────────────────────────────
 
 def test_health_ok(api_client):

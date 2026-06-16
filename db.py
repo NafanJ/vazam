@@ -267,6 +267,57 @@ class VazamDB:
         )
         return result.count or 0
 
+    def list_voices(self) -> list[dict]:
+        """Distinct stored voices (actor + voice_label) with sample counts.
+
+        Powers enrollment pickers — each entry is one fingerprint that new
+        recordings can be added to. Returns dicts with keys:
+            actor_id, actor_name, voice_label, character_id, samples
+        """
+        rows = (
+            self._client.table("vazam_embeddings")
+            .select("actor_id, voice_label, character_id")
+            .execute()
+            .data
+            or []
+        )
+        agg: dict[tuple, dict] = {}
+        for r in rows:
+            key = (r["actor_id"], r["voice_label"])
+            entry = agg.setdefault(key, {
+                "actor_id": r["actor_id"], "voice_label": r["voice_label"],
+                "character_id": r.get("character_id"), "samples": 0,
+            })
+            entry["samples"] += 1
+            if entry["character_id"] is None and r.get("character_id") is not None:
+                entry["character_id"] = r["character_id"]
+
+        names: dict[int, str] = {}
+        out = []
+        for v in agg.values():
+            aid = v["actor_id"]
+            if aid not in names:
+                a = self.get_actor(aid)
+                names[aid] = a["name"] if a else f"#{aid}"
+            v["actor_name"] = names[aid]
+            out.append(v)
+        out.sort(key=lambda v: (v["voice_label"] == "Natural Voice", v["actor_name"], v["voice_label"]))
+        return out
+
+    def find_voice(self, actor_id: int, voice_label: str) -> Optional[dict]:
+        """Return an existing embedding row (character_id, voice_label) for this
+        actor + voice label, or None — used to link new contributions correctly."""
+        rows = (
+            self._client.table("vazam_embeddings")
+            .select("character_id, voice_label")
+            .eq("actor_id", actor_id)
+            .eq("voice_label", voice_label)
+            .execute()
+            .data
+            or []
+        )
+        return rows[0] if rows else None
+
     def search_embeddings(
         self,
         query_embedding: np.ndarray,

@@ -55,6 +55,8 @@
   .spk { font-size: 12px; color: var(--accent); margin: 14px 0 6px; font-weight: 600; }
   .showline { font-size: 14px; margin-bottom: 10px; padding: 10px 12px; background: rgba(47,129,247,.12); border-radius: 8px; }
   .alts { margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .enrollchip { margin-top: 8px; width: 100%; background: transparent; color: var(--good); border: 1px solid var(--good); border-radius: 8px; padding: 9px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .enrollchip:disabled { opacity: .7; cursor: default; }
   .status { color: var(--muted); font-size: 14px; text-align: center; padding: 10px; }
   .progress { margin: 6px 0 14px; display: none; }
   .progress .lbl { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
@@ -101,6 +103,14 @@
     <input type="file" id="fileInput" accept="audio/*" />
     <button class="big" id="goBtn" disabled style="margin-top:12px">Identify</button>
 
+    <div style="margin-top:18px; border-top:1px solid var(--line); padding-top:14px">
+      <label>➕ Or add the staged clip to a character's fingerprint (improves accuracy)</label>
+      <div class="row">
+        <select id="voiceSel" style="flex:1; min-width:0; background:var(--bg); border:1px solid var(--line); color:var(--txt); border-radius:8px; padding:9px 10px; font-size:14px"></select>
+        <button class="big" id="enrollBtn" disabled style="width:auto; padding:11px 16px; margin-top:0">Add clip</button>
+      </div>
+    </div>
+
     <details style="margin-top:14px">
       <summary>Backend URL</summary>
       <input type="text" id="apiBase" placeholder="(defaults to this page's origin)" style="margin-top:8px" />
@@ -125,6 +135,7 @@
 const $ = (s) => document.querySelector(s);
 let mode = "identify";
 let pending = null;       // { blob, name } awaiting Identify
+let lastWav = null;       // last converted WAV, reused for one-click enroll
 let mediaRecorder = null, chunks = [], recStart = 0, timerInt = null;
 
 // ── Mode toggle ──────────────────────────────────────────────────────────────
@@ -172,7 +183,8 @@ $("#fileInput").addEventListener("change", (e) => {
 function stagePending(blob, name) {
   pending = { blob, name };
   $("#goBtn").disabled = false;
-  setStatus("Ready: " + name + " — tap Identify.");
+  $("#enrollBtn").disabled = false;
+  setStatus("Ready: " + name + " — tap Identify or add to a fingerprint.");
 }
 
 // ── Submit ───────────────────────────────────────────────────────────────────
@@ -183,6 +195,7 @@ $("#goBtn").addEventListener("click", async () => {
   let wav;
   try {
     wav = await blobToWav16k(pending.blob);
+    lastWav = wav;
   } catch (err) { setStatus("Could not decode that audio: " + err.message, true); $("#goBtn").disabled = false; return; }
 
   const isolate = $("#isolate").checked;
@@ -250,6 +263,7 @@ function render(data, name, secs) {
     if (!list.length) wrap.appendChild(noMatch());
     else {
       wrap.appendChild(matchCard(list[0]));
+      wrap.appendChild(enrollButton(list[0]));
       if (list.length > 1) wrap.appendChild(altList(list.slice(1)));
     }
   } else if (data.speakers) {                  // /identify/show
@@ -284,10 +298,18 @@ function altList(rest) {
 }
 function noMatch() { const d = document.createElement("div"); d.className = "result none"; d.innerHTML = `<div class="char">No match</div><div class="actor">no voice cleared the threshold</div>`; return d; }
 function archive(node) {
+  node.querySelectorAll(".enrollchip").forEach((b) => b.remove());  // inert in history
   $("#histPanel").style.display = "block";
   const h = $("#history");
   h.prepend(node);
   while (h.children.length > 8) h.removeChild(h.lastChild);
+}
+function enrollButton(m) {
+  const b = document.createElement("button");
+  b.className = "enrollchip";
+  b.textContent = "➕ Correct? Add this clip to " + (m.character_name || m.actor_name) + "'s fingerprint";
+  b.onclick = () => enroll(lastWav, m.actor_id, m.character_name, b);
+  return b;
 }
 
 function setStatus(msg, isErr) {
@@ -350,6 +372,55 @@ function logLine(t, ok) {
   $("#log").appendChild(d);
   $("#log").scrollTop = $("#log").scrollHeight;
 }
+
+// ── Enrollment: add a clip to a character's fingerprint ──────────────────────
+let voicesList = [];
+async function loadVoices() {
+  try {
+    const res = await fetch(apiUrl("/voices"));
+    if (!res.ok) return;
+    voicesList = await res.json();
+    const sel = $("#voiceSel"); sel.innerHTML = "";
+    if (!voicesList.length) { const o = document.createElement("option"); o.textContent = "(no voices yet)"; sel.appendChild(o); return; }
+    voicesList.forEach((v, i) => {
+      const o = document.createElement("option");
+      o.value = i;
+      o.textContent = v.voice_label + " — " + v.actor_name + " (" + v.samples + " clip" + (v.samples === 1 ? "" : "s") + ")";
+      sel.appendChild(o);
+    });
+  } catch (e) { /* ignore */ }
+}
+async function enroll(wav, actorId, voiceLabel, btn) {
+  if (!wav) { setStatus("Record or upload a clip first.", true); return; }
+  const orig = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "Adding…"; }
+  const fd = new FormData();
+  fd.append("audio", wav, "enroll.wav");
+  fd.append("actor_id", actorId);
+  fd.append("voice_label", voiceLabel);
+  fd.append("isolate", $("#isolate").checked ? "true" : "false");
+  try {
+    const res = await fetch(apiUrl("/enroll"), { method: "POST", body: fd });
+    if (!res.ok) throw new Error("server " + res.status + ": " + (await res.text()).slice(0, 120));
+    const d = await res.json();
+    if (btn) btn.textContent = "✓ Added — " + d.samples + " clips";
+    setStatus("Added to " + d.voice_label + " (" + d.actor_name + ") — now " + d.samples + " reference clip(s).");
+    loadVoices();
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = orig || "➕ retry"; }
+    setStatus("Enroll failed: " + e.message, true);
+  }
+}
+$("#enrollBtn").addEventListener("click", async () => {
+  if (!pending) { setStatus("Record or upload a clip first.", true); return; }
+  const v = voicesList[Number($("#voiceSel").value)];
+  if (!v) { setStatus("Pick a character to add to.", true); return; }
+  setStatus("Converting…");
+  let wav;
+  try { wav = await blobToWav16k(pending.blob); } catch (e) { setStatus("Decode failed: " + e.message, true); return; }
+  await enroll(wav, v.actor_id, v.voice_label, $("#enrollBtn"));
+});
+loadVoices();
 
 // ── Populate show filter ──────────────────────────────────────────────────────
 (async function loadShows() {

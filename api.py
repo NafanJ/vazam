@@ -335,6 +335,52 @@ async def identify_show(
     )
 
 
+@app.get("/voices", tags=["Identification"])
+def list_voices():
+    """List stored voice fingerprints (actor + voice label + sample count).
+
+    Each entry is a fingerprint that `POST /enroll` can add recordings to.
+    """
+    return db.list_voices()
+
+
+@app.post("/enroll", tags=["Identification"])
+async def enroll(
+    audio: UploadFile = File(..., description="A clip of this character speaking"),
+    actor_id: int = Form(..., description="Actor who voices the character"),
+    voice_label: str = Form(..., description="Character / voice label to add to"),
+    isolate: bool = Form(True, description="Run Demucs vocal isolation first"),
+):
+    """Add a recording to a character's voice fingerprint (enrollment).
+
+    Embeds the clip and stores it as an additional reference for this
+    actor+voice, linked to the same character as the existing fingerprint.
+    Phone-mic recordings are ideal here — they match real query conditions.
+    """
+    actor = db.get_actor(actor_id)
+    if not actor:
+        raise HTTPException(404, f"Actor {actor_id} not found")
+
+    existing = db.find_voice(actor_id, voice_label)
+    character_id = existing["character_id"] if existing else None
+
+    path = await _save_upload(audio)
+    try:
+        embedding = pipeline.embed_file(path, isolate=isolate)
+    finally:
+        os.unlink(path)
+
+    db.add_embedding(
+        actor_id=actor_id, embedding=embedding, character_id=character_id,
+        voice_label=voice_label, audio_source="dashboard-enroll", verified=False,
+    )
+    samples = next(
+        (v["samples"] for v in db.list_voices()
+         if v["actor_id"] == actor_id and v["voice_label"] == voice_label), 1,
+    )
+    return {"ok": True, "actor_name": actor["name"], "voice_label": voice_label, "samples": samples}
+
+
 # ── Routes: actors ────────────────────────────────────────────────────────────
 
 @app.post("/actors", response_model=ActorResponse, status_code=201, tags=["Actors"])

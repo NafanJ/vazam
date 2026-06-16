@@ -70,6 +70,9 @@ A single-page dashboard is served at **`http://localhost:8000/`** — record fro
 HTTPS) or upload a clip, and it returns the **character** and the **actor** who plays them. It
 streams a live progress log over the (CPU-bound) isolation step via `POST /identify/stream`, has an
 optional **show filter** for closed-set accuracy, and trims long clips to the first 20s client-side.
+It also supports **enrollment** — add a recording to an existing character's fingerprint
+(`GET /voices` to pick, `POST /enroll` to contribute). Phone-mic clips are ideal reference data
+since they match real query conditions, so enrolling correct IDs steadily improves accuracy.
 For responsive isolation on CPU, run the server with the fast Demucs model:
 
 ```bash
