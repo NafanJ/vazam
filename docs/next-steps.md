@@ -64,12 +64,13 @@ the native scaffolding is its own task (see below).
 ## Live validation (June 2026) — proven end-to-end on real data
 
 The pipeline has now been run for real, not just unit-tested. Current Supabase
-project (`rpmcsbgtsvpoczpycozr`) holds **12 embeddings**: 8 consensus "Natural
+project (`rpmcsbgtsvpoczpycozr`) holds **14 embeddings**: 8 consensus "Natural
 Voice" (Steve Blum + 7 of 10 Attack on Titan main-cast seiyuu — Eren/Yuuki Kaji,
 Armin/Marina Inoue, Levi/Hiroshi Kamiya, Hange/Romi Park, Annie/Yuu Shimamura,
 Reiner/Yoshimasa Hosoya, Connie/Hiro Shimono; Erwin/Daisuke Ono, Jean/Kishou
-Taniyama, Mikasa/Yui Ishikawa missed consensus) plus **4 per-character voices**
-(`Eren Yeager`, `Levi`, `Mikasa Ackerman`, `Connie Springer` — see below). Natural-voice quality
+Taniyama, Mikasa/Yui Ishikawa missed consensus) plus **6 per-character voices**
+(`Eren Yeager`, `Levi`, `Mikasa Ackerman`, `Connie Springer`, `Annie Leonhart`,
+`Hange` — see below). Natural-voice quality
 scores 0.57–0.72. Note: the Mikasa character voice *recovered* Yui Ishikawa, who
 the consensus scraper had missed — she went from zero embeddings to identifiable.
 
@@ -117,6 +118,16 @@ What the validation runs showed:
   (wrong) top match **Marina Inoue `[Natural Voice]` 0.554** — so the character
   embedding both makes a previously-unknown actor identifiable *and* fixes a mis-ID.
   The Eren speaker stayed stable at 0.685 in the same run.
+- **Annie + Hange added with the fast `htdemucs` model** (both from the trusted
+  `セリフ切り抜き` uploader, single clean line-cut each — `UoZdE7sH3pQ` / `G2Hh-nIt56E`).
+  Validated on held-out scenes via diarized `identify_multi`: **Annie** (Yuu Shimamura)
+  → `Annie Leonhart` **0.796 confident, window-verified 1.00**, beating Armin's seiyuu
+  Marina Inoue `[Natural]` 0.504 in the same scene — the strongest per-character result
+  so far. **Hange** (Romi Park) → `Hange` **0.543 possible, win 0.67**, correct top-1 over
+  Eren 0.490, where Romi Park's Natural Voice didn't rank (the Levi/Mikasa rescue pattern).
+  Method note: single-speaker `identify()` first locked onto **Eren** on an Annie *combat*
+  clip (she barely speaks there) — taciturn/ensemble characters need a *dialogue* scene and
+  diarized `identify_multi`, not a single-speaker pass.
 - **Blind test caught the gap in the wild.** A random Connie (Hiro Shimono) clip the
   user supplied: `identify()` ranked **Hiro Shimono #1 — correct** — but at **0.432**,
   just under the 0.50 claim threshold, because we only had his *Natural Voice* and
@@ -184,11 +195,13 @@ cross-condition takes pull together. Deferred — 7/10 is enough for show infere
    Levi, *and* Mikasa** (`add_character_voice.py`; see Live validation — Eren
    0.525→0.686, Levi 0.917 rescuing a mis-ID, Mikasa 0.690 recovering a missed actor).
    Remaining work, in rough order:
-   - **Scale to more leads** — Annie/Yuu Shimamura, Hange/Romi Park (the same uploader
-     behind the clean Levi/Eren/Mikasa line-cuts has `セリフ切り抜き … 声マネ練習用` clips
-     for both, plus Erwin), then other shows. Lazily, top-billed only (anti-goal: never
-     bulk-scrape character clips). Each add is self-measuring — re-run `identify/show`
-     on a *conversation* scene with that character. **For batch ingestion, use
+   - **Scale to more leads** — ✅ **Annie + Hange done** (both via the trusted
+     `セリフ切り抜き … 声マネ練習用` uploader, ingested with the fast `htdemucs` model;
+     validated below). **Erwin/Daisuke Ono** is the next obvious add from the same uploader,
+     then other shows. Lazily, top-billed only (anti-goal: never bulk-scrape character
+     clips). Each add is self-measuring — run diarized `identify_multi` on a *conversation*
+     scene with that character (single-speaker `identify` locks onto whoever talks most,
+     which for a taciturn character like Annie is the co-star). **For batch ingestion, use
      `--demucs-model htdemucs`** (or `DEMUCS_MODEL=htdemucs`): isolation is the dominant
      cost on CPU and the lighter model is ~3.7× faster (1550s → 421s on the Connie clip)
      at cosine **0.972** agreement with the `htdemucs_ft` default — measured, near-free.
