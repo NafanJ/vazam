@@ -267,13 +267,16 @@ def add_character_voice(
     augment: bool = True,
     isolate: bool = False,
     select: str = "dominant",
+    demucs_model: Optional[str] = None,
     dry_run: bool = False,
 ) -> str:
     """Ingest a character-voice embedding for one role from one or more sources.
 
     ``isolate`` runs Demucs vocal isolation on each source before diarization —
     recommended for anime/show clips (which carry a music/SFX bed) and unnecessary
-    for clean voice-line rips. ``select`` chooses the per-source speaker policy:
+    for clean voice-line rips. ``demucs_model`` overrides the isolation model
+    (default ``htdemucs_ft``; ``htdemucs`` is ~4× faster for marginal quality
+    loss). ``select`` chooses the per-source speaker policy:
     ``"dominant"`` (most speech — the character in a single-character compilation)
     or ``"nearest-natural"`` (the speaker closest to the actor's stored Natural
     Voice — for ensemble characters who never speak solo; requires that Natural
@@ -335,8 +338,9 @@ def add_character_voice(
             if isolate:
                 from pipeline import isolate_vocals
 
-                audio_path = isolate_vocals(audio_path, output_dir=tmpdir)
-                print("    · vocals isolated (Demucs)")
+                audio_path = isolate_vocals(audio_path, output_dir=tmpdir,
+                                            model=demucs_model)
+                print(f"    · vocals isolated (Demucs {demucs_model or 'htdemucs_ft'})")
             try:
                 if select == "nearest-natural":
                     got = nearest_natural_speaker(audio_path, hf_token, device, natural_ref)
@@ -447,6 +451,10 @@ def main() -> None:
                              "'nearest-natural' (speaker closest to the actor's stored "
                              "Natural Voice — use for ensemble characters who never "
                              "speak solo, e.g. Connie; requires that Natural Voice)")
+    parser.add_argument("--demucs-model", default=None, metavar="NAME",
+                        help="Demucs model for --isolate (default htdemucs_ft). "
+                             "htdemucs is ~4x faster for marginal quality loss — "
+                             "good for batch ingestion. Also settable via DEMUCS_MODEL.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Resolve actor/character and print sources without writing")
     args = parser.parse_args()
@@ -464,6 +472,7 @@ def main() -> None:
         augment=not args.no_augment,
         isolate=args.isolate,
         select=args.select,
+        demucs_model=args.demucs_model,
         dry_run=args.dry_run,
     )
     sys.exit(0 if outcome in ("ok", "dry_run") else 1)

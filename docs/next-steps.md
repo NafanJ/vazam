@@ -188,7 +188,13 @@ cross-condition takes pull together. Deferred — 7/10 is enough for show infere
      behind the clean Levi/Eren/Mikasa line-cuts has `セリフ切り抜き … 声マネ練習用` clips
      for both, plus Erwin), then other shows. Lazily, top-billed only (anti-goal: never
      bulk-scrape character clips). Each add is self-measuring — re-run `identify/show`
-     on a *conversation* scene with that character.
+     on a *conversation* scene with that character. **For batch ingestion, use
+     `--demucs-model htdemucs`** (or `DEMUCS_MODEL=htdemucs`): isolation is the dominant
+     cost on CPU and the lighter model is ~3.7× faster (1550s → 421s on the Connie clip)
+     at cosine **0.972** agreement with the `htdemucs_ft` default — measured, near-free.
+   - **Speed: GPU is the real unlock for a full-cast batch.** Demucs + pyannote both honor
+     `DEVICE`; on CPU a single isolate is ~7–26 min/clip. A one-off cloud-GPU run would
+     crush the backlog 10–30×. Code is already GPU-ready.
    - ~~**Build `--select nearest-natural`**~~ ✅ **Done + proven on Connie** (see the
      ensemble blind-spot note in Live validation — blind clip flipped 0.432 no-claim →
      0.675 verified `as Connie Springer`). Reaches ensemble characters who never carry a

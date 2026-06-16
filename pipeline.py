@@ -154,19 +154,32 @@ class IdentificationResult:
 
 # ── Stage 1: Voice isolation (Demucs) ────────────────────────────────────────
 
-def isolate_vocals(input_path: str, output_dir: str = "separated") -> str:
-    """Run Demucs htdemucs_ft to separate the vocal stem.
+# Demucs model for vocal isolation. `htdemucs_ft` (the default) is a *bag of 4*
+# fine-tuned models — highest quality but ~4× slower than the single-pass
+# `htdemucs`. For isolation feeding diarization (we only need speech clean
+# enough to find the right speaker, not studio stems), `htdemucs` is usually a
+# near-free speedup. Override per run with the DEMUCS_MODEL env var or the
+# `model` argument.
+DEMUCS_MODEL = os.environ.get("DEMUCS_MODEL", "htdemucs_ft")
 
-    Returns the path to the isolated vocals.wav file.
-    Falls back to the original file if Demucs fails (e.g. audio is already
-    clean speech with no music).
+
+def isolate_vocals(
+    input_path: str, output_dir: str = "separated", model: Optional[str] = None
+) -> str:
+    """Run Demucs to separate the vocal stem.
+
+    ``model`` selects the Demucs model (defaults to ``DEMUCS_MODEL`` —
+    ``htdemucs_ft`` unless overridden). Returns the path to the isolated
+    vocals.wav file. Falls back to the original file if Demucs fails (e.g. audio
+    is already clean speech with no music).
     """
+    model = model or DEMUCS_MODEL
     try:
         subprocess.run(
             [
                 sys.executable, "-m", "demucs",
                 "--two-stems=vocals",
-                "-n", "htdemucs_ft",
+                "-n", model,
                 "-o", output_dir,
                 input_path,
             ],
@@ -174,7 +187,7 @@ def isolate_vocals(input_path: str, output_dir: str = "separated") -> str:
             capture_output=True,
         )
         basename = Path(input_path).stem
-        vocals_path = os.path.join(output_dir, "htdemucs_ft", basename, "vocals.wav")
+        vocals_path = os.path.join(output_dir, model, basename, "vocals.wav")
         if os.path.exists(vocals_path):
             return vocals_path
     except (subprocess.CalledProcessError, FileNotFoundError):
