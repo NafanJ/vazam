@@ -22,9 +22,15 @@ for a single named role.
 How a source is turned into an embedding
 ----------------------------------------
 1. Download the first few minutes of each source (yt-dlp), or load a local file.
-2. Diarize and take the **dominant speaker** — the one with the most speech. In a
-   character voice compilation that is the character; co-speakers and uploader intros
-   are minority and get dropped. (Without HF_TOKEN, the whole clip is embedded.)
+2. Diarize and select a speaker. Two policies (--select):
+   - **dominant** (default) — the speaker with the most speech. In a single-character
+     compilation that is the character; co-speakers and uploader intros get dropped.
+   - **nearest-natural** — the speaker closest to the actor's stored Natural Voice.
+     Use this for *ensemble* characters who never carry a scene alone (e.g. Connie):
+     their only clips are group scenes where someone else dominates, so "dominant"
+     picks the wrong voice. Requires the actor to already have a Natural Voice, and
+     only works when the character voice still ranks against it.
+   (Without HF_TOKEN there is no diarization — the whole clip is embedded.)
 3. Embed that speaker's speech (ECAPA-TDNN, capped at MAX_EMBED_SECONDS).
 4. With ≥2 sources, require the per-source dominant-speaker embeddings to *agree*
    (mean pairwise cosine ≥ MIN_CLIP_AGREEMENT) — if the "dominant speaker" isn't the
@@ -60,6 +66,7 @@ Environment variables
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -109,46 +116,78 @@ def video_id_from_url(url: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
-def dominant_speaker(audio_path: str, hf_token: str, device: str):
-    """Embed the speaker with the most speech in a clip.
+def _all_speaker_embeddings(audio_path: str, hf_token: str, device: str):
+    """Embed every speaker with ≥ MIN_SPEAKER_SECONDS of speech in a clip.
 
-    Returns (embedding, speech_tensor, seconds), or None if no speaker clears
-    MIN_SPEAKER_SECONDS. With a token we diarize and pick the longest-speaking
-    cluster (the character, in a character compilation); without one we embed
-    the whole clip.
+    Returns a list of (label, embedding, speech_tensor, seconds). With a token we
+    diarize and embed each speaker's concatenated speech (capped at
+    MAX_EMBED_SECONDS); without one, a single whole-clip "FULL" entry (no speaker
+    separation). Shared by the selection policies below.
     """
     import torch
 
     from pipeline import diarize, get_embedding
 
     signal = _load_mono_16k(audio_path)
+    out: list[tuple] = []
 
     if hf_token:
         segments = diarize(audio_path, hf_token)
         if not segments:
-            return None
+            return []
         by_label: dict[str, list] = {}
         for seg in segments:
             by_label.setdefault(seg.speaker_label, []).append(seg)
-        # Dominant = most total speech across the clip.
-        label, segs = max(
-            by_label.items(), key=lambda kv: sum(s.duration for s in kv[1])
-        )
-        total = sum(s.duration for s in segs)
-        if total < MIN_SPEAKER_SECONDS:
-            return None
-        chunks = [
-            signal[:, int(s.start * 16000): int(s.end * 16000)] for s in segs
-        ]
-        speech = torch.cat(chunks, dim=1)[:, : int(MAX_EMBED_SECONDS * 16000)]
-        seconds = min(total, MAX_EMBED_SECONDS)
+        for label, segs in by_label.items():
+            total = sum(s.duration for s in segs)
+            if total < MIN_SPEAKER_SECONDS:
+                continue
+            chunks = [
+                signal[:, int(s.start * 16000): int(s.end * 16000)] for s in segs
+            ]
+            speech = torch.cat(chunks, dim=1)[:, : int(MAX_EMBED_SECONDS * 16000)]
+            out.append((label, get_embedding(speech, device=device), speech,
+                        min(total, MAX_EMBED_SECONDS)))
     else:
         speech = signal[:, : int(MAX_EMBED_SECONDS * 16000)]
         seconds = speech.shape[1] / 16000
-        if seconds < MIN_SPEAKER_SECONDS:
-            return None
+        if seconds >= MIN_SPEAKER_SECONDS:
+            out.append(("FULL", get_embedding(speech, device=device), speech, seconds))
+    return out
 
-    emb = get_embedding(speech, device=device)
+
+def dominant_speaker(audio_path: str, hf_token: str, device: str):
+    """Embed the speaker with the most speech (the character, in a single-character
+    compilation).
+
+    Returns (embedding, speech_tensor, seconds), or None if no speaker clears
+    MIN_SPEAKER_SECONDS.
+    """
+    cands = _all_speaker_embeddings(audio_path, hf_token, device)
+    if not cands:
+        return None
+    _, emb, speech, seconds = max(cands, key=lambda c: c[3])
+    return emb, speech, seconds
+
+
+def nearest_natural_speaker(audio_path: str, hf_token: str, device: str, natural_ref):
+    """Embed the speaker whose voice is closest to the actor's Natural Voice.
+
+    For ensemble characters who never carry a scene alone — so the *dominant*
+    speaker in their clips is usually someone else — this picks the right speaker
+    out of a group clip, provided the character voice still ranks against the
+    actor's natural-voice reference (it won't help a voice so altered the natural
+    reference doesn't rank at all, but for those dominant-speaker already works).
+    Returns (embedding, speech_tensor, seconds), or None.
+    """
+    import numpy as np
+
+    cands = _all_speaker_embeddings(audio_path, hf_token, device)
+    if not cands:
+        return None
+    _, emb, speech, seconds = max(
+        cands, key=lambda c: float(np.dot(c[1], natural_ref))
+    )
     return emb, speech, seconds
 
 
@@ -170,6 +209,34 @@ def resolve_character_id(
     if show_id is not None:
         rows = [r for r in rows if r.get("show_id") == show_id] or rows
     return rows[0]["id"] if rows else None
+
+
+def _parse_embedding(raw):
+    """Parse a stored pgvector value (a list, or a '[..]' string) into a unit float32 array."""
+    import numpy as np
+
+    if isinstance(raw, str):
+        raw = json.loads(raw)
+    v = np.asarray(raw, dtype="float32")
+    n = float(np.linalg.norm(v))
+    return v / n if n > 0 else v
+
+
+def actor_natural_embedding(db, actor_id: int):
+    """Return the actor's stored 'Natural Voice' embedding (unit float32), or None.
+
+    The reference the `nearest-natural` selection policy matches speakers against.
+    """
+    rows = (
+        db._client.table("vazam_embeddings")
+        .select("embedding, voice_label")
+        .eq("actor_id", actor_id)
+        .eq("voice_label", "Natural Voice")
+        .execute()
+        .data
+        or []
+    )
+    return _parse_embedding(rows[0]["embedding"]) if rows else None
 
 
 def resolve_actor_id(db, actor_name: str) -> Optional[int]:
@@ -199,13 +266,18 @@ def add_character_voice(
     show_id: Optional[int] = None,
     augment: bool = True,
     isolate: bool = False,
+    select: str = "dominant",
     dry_run: bool = False,
 ) -> str:
     """Ingest a character-voice embedding for one role from one or more sources.
 
     ``isolate`` runs Demucs vocal isolation on each source before diarization —
     recommended for anime/show clips (which carry a music/SFX bed) and unnecessary
-    for clean voice-line rips. Returns: "ok", "no_actor", "no_audio",
+    for clean voice-line rips. ``select`` chooses the per-source speaker policy:
+    ``"dominant"`` (most speech — the character in a single-character compilation)
+    or ``"nearest-natural"`` (the speaker closest to the actor's stored Natural
+    Voice — for ensemble characters who never speak solo; requires that Natural
+    Voice to exist). Returns: "ok", "no_actor", "no_natural", "no_audio",
     "no_speaker", "inconsistent", or "dry_run".
     """
     from db import VazamDB
@@ -235,12 +307,24 @@ def add_character_voice(
     character_id = resolve_character_id(db, actor_id, character, show_id)
     link = f"character_id={character_id}" if character_id else "unlinked (no character row)"
     print(f"Actor #{actor_id} '{actor_name}' as '{character}' — {link}")
+
+    # nearest-natural needs the actor's Natural Voice to match speakers against.
+    natural_ref = None
+    if select == "nearest-natural":
+        natural_ref = actor_natural_embedding(db, actor_id)
+        if natural_ref is None:
+            print(f"✗ --select nearest-natural needs a stored 'Natural Voice' for "
+                  f"'{actor_name}' to match against — run scrape_audio.py first")
+            return "no_natural"
+        print("  selection: speaker nearest the actor's Natural Voice")
+    else:
+        print("  selection: dominant speaker")
     for s in sources:
         print(f"  source: {s}")
     if dry_run:
         return "dry_run"
 
-    # ── Embed the dominant speaker of each source ────────────────────────────
+    # ── Embed the selected speaker of each source ────────────────────────────
     per_source: list[SourceEmbedding] = []
     with tempfile.TemporaryDirectory() as tmpdir:
         for src in sources:
@@ -254,7 +338,10 @@ def add_character_voice(
                 audio_path = isolate_vocals(audio_path, output_dir=tmpdir)
                 print("    · vocals isolated (Demucs)")
             try:
-                got = dominant_speaker(audio_path, hf_token, device)
+                if select == "nearest-natural":
+                    got = nearest_natural_speaker(audio_path, hf_token, device, natural_ref)
+                else:
+                    got = dominant_speaker(audio_path, hf_token, device)
             except Exception as exc:  # pragma: no cover - defensive
                 print(f"  ✗ embedding error ({src}): {exc}")
                 continue
@@ -263,7 +350,7 @@ def add_character_voice(
                 continue
             emb, speech, seconds = got
             per_source.append(SourceEmbedding(src, emb, speech, seconds))
-            print(f"  ✓ dominant speaker embedded ({seconds:.0f}s)")
+            print(f"  ✓ speaker embedded ({seconds:.0f}s)")
 
         if not per_source:
             print("✗ no usable audio across sources — nothing stored")
@@ -353,6 +440,13 @@ def main() -> None:
     parser.add_argument("--isolate", action="store_true",
                         help="Run Demucs vocal isolation before diarization "
                              "(recommended for anime/show clips with a music bed)")
+    parser.add_argument("--select", choices=["dominant", "nearest-natural"],
+                        default="dominant",
+                        help="Speaker-selection policy: 'dominant' (most speech — the "
+                             "character in a single-character compilation; default) or "
+                             "'nearest-natural' (speaker closest to the actor's stored "
+                             "Natural Voice — use for ensemble characters who never "
+                             "speak solo, e.g. Connie; requires that Natural Voice)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Resolve actor/character and print sources without writing")
     args = parser.parse_args()
@@ -369,6 +463,7 @@ def main() -> None:
         show_id=args.show_id,
         augment=not args.no_augment,
         isolate=args.isolate,
+        select=args.select,
         dry_run=args.dry_run,
     )
     sys.exit(0 if outcome in ("ok", "dry_run") else 1)

@@ -114,6 +114,78 @@ def test_dominant_speaker_no_token_embeds_whole_clip(rng):
     ge.assert_called_once()
 
 
+# ── nearest_natural_speaker ───────────────────────────────────────────────────
+
+def test_nearest_natural_speaker_picks_closest_not_longest(rng):
+    """Among speakers, the one nearest the natural-voice ref wins even if another
+    speaks much longer (the ensemble-character case dominant_speaker gets wrong)."""
+    import torch
+
+    natural = _voice(rng)
+    character = _appearance(natural, rng, noise=0.3)   # the actor, in character
+    other = _voice(rng)                                 # a louder co-speaker
+    # SPEAKER_00 talks far longer (dominant) but is the wrong person;
+    # SPEAKER_01 is the character, closest to the natural reference.
+    segs = [
+        SpeakerSegment("SPEAKER_00", 0.0, 30.0),
+        SpeakerSegment("SPEAKER_01", 30.0, 40.0),
+    ]
+    embed_by_label = {"SPEAKER_00": other, "SPEAKER_01": character}
+
+    def fake_embed(speech, device="cpu"):
+        # 30s chunk → SPEAKER_00, 10s chunk → SPEAKER_01
+        return other if speech.shape[1] == int(30.0 * 16000) else character
+
+    with (
+        patch.object(acv, "_load_mono_16k", return_value=torch.zeros(1, 16000 * 45)),
+        patch("pipeline.diarize", return_value=segs),
+        patch("pipeline.get_embedding", side_effect=fake_embed),
+    ):
+        emb, speech, seconds = acv.nearest_natural_speaker("x.wav", "hf", "cpu", natural)
+
+    assert np.allclose(emb, character)
+    assert seconds == pytest.approx(10.0)            # the character's turn, not the 30s one
+    assert embed_by_label  # silences unused-var linters; mapping documents intent
+
+
+def test_nearest_natural_speaker_none_when_no_speakers(rng):
+    import torch
+
+    with (
+        patch.object(acv, "_load_mono_16k", return_value=torch.zeros(1, 16000 * 5)),
+        patch("pipeline.diarize", return_value=[]),
+        patch("pipeline.get_embedding", return_value=_voice(rng)),
+    ):
+        assert acv.nearest_natural_speaker("x.wav", "hf", "cpu", _voice(rng)) is None
+
+
+# ── _parse_embedding / actor_natural_embedding ────────────────────────────────
+
+def test_parse_embedding_from_list_and_string():
+    raw = [3.0, 4.0] + [0.0] * 190
+    from_list = acv._parse_embedding(raw)
+    from_str = acv._parse_embedding("[" + ", ".join(str(x) for x in raw) + "]")
+    assert np.allclose(from_list, from_str)
+    assert np.linalg.norm(from_list) == pytest.approx(1.0)      # unit-normalized
+    assert from_list[0] == pytest.approx(0.6) and from_list[1] == pytest.approx(0.8)
+
+
+def test_actor_natural_embedding_returns_unit_vector(db, rng):
+    actor_id = db.add_actor("Yuuki Kaji", anilist_id=1)
+    voice = _voice(rng)
+    db.add_embedding(actor_id, voice, voice_label="Natural Voice")
+    db.add_embedding(actor_id, _voice(rng), voice_label="Eren Yeager")  # decoy
+    got = acv.actor_natural_embedding(db, actor_id)
+    assert got is not None
+    assert np.allclose(got, voice, atol=1e-5)
+
+
+def test_actor_natural_embedding_none_without_natural(db, rng):
+    actor_id = db.add_actor("Hiro Shimono", anilist_id=2)
+    db.add_embedding(actor_id, _voice(rng), voice_label="Connie Springer")
+    assert acv.actor_natural_embedding(db, actor_id) is None
+
+
 # ── actor / character resolution against the fake DB ──────────────────────────
 
 def test_resolve_actor_prefers_exact_match(db):
@@ -222,6 +294,61 @@ def test_add_character_voice_consistent_sources_store_quality(db, rng):
     row = db._client.table("vazam_embeddings").select("*").execute().data[0]
     assert row["quality_score"] is not None and row["quality_score"] > acv.MIN_CLIP_AGREEMENT
     assert row["duration_s"] == pytest.approx(38.0)        # 20 + 18
+
+
+def test_add_character_voice_nearest_natural_uses_natural_ref(db, rng):
+    """select='nearest-natural' looks up the actor's Natural Voice and routes the
+    per-source embedding through nearest_natural_speaker (not dominant_speaker)."""
+    actor_id = db.add_actor("Hiro Shimono", anilist_id=1)
+    show_id = db.add_show("Attack on Titan", anilist_id=10)
+    char_id = db.add_character("Connie Springer", show_id, actor_id, anilist_id=100)
+    natural = _voice(rng)
+    db.add_embedding(actor_id, natural, voice_label="Natural Voice")
+    character = _appearance(natural, rng, noise=0.3)
+
+    seen = {}
+
+    def fake_nearest(audio_path, hf_token, device, natural_ref):
+        seen["ref"] = natural_ref
+        return character, None, 15.0
+
+    with (
+        _patch_db(db),
+        patch.dict("os.environ", {"HF_TOKEN": "hf", "DEVICE": "cpu"}),
+        patch.object(acv, "nearest_natural_speaker", side_effect=fake_nearest),
+        patch.object(acv, "dominant_speaker", side_effect=AssertionError("should not be called")),
+        patch.object(acv, "_resolve_source", return_value="clip.wav"),
+        patch.object(acv, "_build_embedding", return_value=character),
+    ):
+        outcome = acv.add_character_voice(
+            "Hiro Shimono", "Connie Springer",
+            sources=["a.wav"], show="Attack on Titan",
+            select="nearest-natural", augment=False,
+        )
+
+    assert outcome == "ok"
+    assert np.allclose(seen["ref"], natural, atol=1e-5)   # the stored Natural Voice
+    row = db._client.table("vazam_embeddings").select("*").execute().data[-1]
+    assert row["voice_label"] == "Connie Springer"
+    assert row["character_id"] == char_id
+
+
+def test_add_character_voice_nearest_natural_requires_natural(db):
+    """Without a stored Natural Voice, nearest-natural aborts before any embedding."""
+    db.add_actor("Hiro Shimono", anilist_id=1)
+    with (
+        _patch_db(db),
+        patch.dict("os.environ", {"HF_TOKEN": "hf", "DEVICE": "cpu"}),
+        patch.object(acv, "nearest_natural_speaker",
+                     side_effect=AssertionError("should not embed without a ref")),
+        patch.object(acv, "_resolve_source", return_value="clip.wav"),
+    ):
+        outcome = acv.add_character_voice(
+            "Hiro Shimono", "Connie Springer",
+            sources=["a.wav"], select="nearest-natural", augment=False,
+        )
+    assert outcome == "no_natural"
+    assert db._client.table("vazam_embeddings").select("*").execute().data == []
 
 
 def test_add_character_voice_no_actor(db):
