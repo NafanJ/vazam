@@ -3,8 +3,10 @@
 Point your phone at any animated show, anime, or video game and instantly know which voice actor is performing.
 
 > **Status — June 2026.** The backend pipeline is validated end-to-end on real audio.
-> **15 reference voices** are stored: 8 consensus "Natural Voice" embeddings (Steve Blum +
-> 7 *Attack on Titan* seiyuu) plus **7 per-character voices** (Eren, Levi, Mikasa, Connie, Annie, Hange, Erwin). A held-out
+> **25 reference voices** across two shows: 8 consensus "Natural Voice" embeddings (Steve Blum +
+> 7 *Attack on Titan* seiyuu) plus **17 per-character voices** — 7 *Attack on Titan*
+> (Eren, Levi, Mikasa, Connie, Annie, Hange, Erwin) and the **10 *One Piece* Straw Hats**
+> (Luffy, Zoro, Nami, Usopp, Sanji, Chopper, Robin, Franky, Brook, Jinbe). A held-out
 > interview matched its actor at cosine **0.884**, and `/identify/show` infers the show from a
 > raw multi-speaker anime scene with no hints. Full validation log + roadmap:
 > [`docs/next-steps.md`](docs/next-steps.md). Architecture & conventions: [`CLAUDE.md`](CLAUDE.md).
@@ -118,6 +120,25 @@ into a correct one. (Mikasa and Erwin also recovered seiyuu the consensus scrape
 character who never carries a scene solo — was added with `--select nearest-natural`, which picks
 the diarized speaker nearest the actor's Natural Voice instead of the loudest, so it works on group
 clips where the character isn't the dominant speaker.
+
+**Second show — *One Piece* Straw Hats (June 2026).** All 10 crew character voices were added from
+**game voice-galleries** (海賊無双4 / TREASURE CRUISE 「全システムボイスセリフ集」) — single-character,
+narrator-free audio, ingested with the fast `htdemucs` model. Validated cross-game (trained on one
+game, tested on a *different* one — a held-out recording of the same seiyuu):
+
+| Straw Hat (seiyuu) | Held-out result |
+|---|---|
+| **Chopper** (Ikue Ōtani) | **0.864** confident, win 1.00 |
+| **Usopp** (Kappei Yamaguchi) | **0.793** confident, win 1.00 (from just 14s of speech) |
+| **Zoro** (Kazuya Nakai) | **0.767** confident, win 1.00 |
+| **Luffy** (Mayumi Tanaka) | **0.721** confident, win 1.00 |
+
+Nami, Sanji, Robin, Franky, Jinbe, and Brook were added from the same clean galleries and recur as
+confident/possible runners-up in each other's tests. Two sourcing lessons: (1) One Piece fan
+"名言集" compilations often carry a **narrator** that poisons the embedding — game voice-galleries
+avoid it; (2) AniList seeds **multiple VAs per long-running character** (era changes, young-version
+flashbacks, fill-ins), so 6 of the 10 Straw Hats had to be re-linked from a secondary VA to the
+canonical seiyuu before scraping.
 
 ### Show-aware search
 

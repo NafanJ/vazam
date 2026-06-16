@@ -64,14 +64,17 @@ the native scaffolding is its own task (see below).
 ## Live validation (June 2026) — proven end-to-end on real data
 
 The pipeline has now been run for real, not just unit-tested. Current Supabase
-project (`rpmcsbgtsvpoczpycozr`) holds **15 embeddings**: 8 consensus "Natural
-Voice" (Steve Blum + 7 of 10 Attack on Titan main-cast seiyuu — Eren/Yuuki Kaji,
+project (`rpmcsbgtsvpoczpycozr`) holds **25 embeddings** across two shows: 8 consensus
+"Natural Voice" (Steve Blum + 7 of 10 Attack on Titan main-cast seiyuu — Eren/Yuuki Kaji,
 Armin/Marina Inoue, Levi/Hiroshi Kamiya, Hange/Romi Park, Annie/Yuu Shimamura,
 Reiner/Yoshimasa Hosoya, Connie/Hiro Shimono; Erwin/Daisuke Ono, Jean/Kishou
-Taniyama, Mikasa/Yui Ishikawa missed consensus) plus **7 per-character voices**
-(`Eren Yeager`, `Levi`, `Mikasa Ackerman`, `Connie Springer`, `Annie Leonhart`,
-`Hange`, `Erwin Smith` — see below). Note: the Mikasa and Erwin character voices
-each *recovered* a seiyuu the consensus scraper had missed (zero prior embeddings). Natural-voice quality
+Taniyama, Mikasa/Yui Ishikawa missed consensus) plus **17 per-character voices**:
+7 *Attack on Titan* (`Eren Yeager`, `Levi`, `Mikasa Ackerman`, `Connie Springer`,
+`Annie Leonhart`, `Hange`, `Erwin Smith`) and the 10 *One Piece* Straw Hats (`Luffy`,
+`Zoro`, `Nami`, `Usopp`, `Sanji`, `Chopper`, `Robin`, `Franky`, `Brook`, `Jinbe`) — see
+below. Note: the Mikasa and Erwin character voices each *recovered* a seiyuu the consensus
+scraper had missed (zero prior embeddings); the entire One Piece crew is character-voice-only
+(no natural-voice baseline — Mayumi Tanaka's consensus scrape missed). Natural-voice quality
 scores 0.57–0.72. Note: the Mikasa character voice *recovered* Yui Ishikawa, who
 the consensus scraper had missed — she went from zero embeddings to identifiable.
 
@@ -135,6 +138,24 @@ What the validation runs showed:
   now matches **`Erwin Smith` 0.639, possible, window-verified 1.00**, beating Yoshimasa
   Hosoya `[Natural]` 0.489 by 0.150. Same recovery pattern as Mikasa — a character voice
   makes a previously-absent actor identifiable.
+- **Second show added — One Piece Straw Hats (all 10 crew character voices).** Sourced from
+  **game voice-galleries** (海賊無双4 / TREASURE CRUISE 「全システムボイスセリフ集 / ボイス集」),
+  ingested with the fast `htdemucs` model. Validated **cross-game** (train on one game, test on a
+  *different* one — a genuinely held-out recording of the same seiyuu): **Chopper** 0.864,
+  **Usopp** 0.793 (from only 14s of speech), **Zoro** 0.767, **Luffy** 0.721 — all confident,
+  window-verified 1.00. Nami/Sanji/Robin/Franky/Jinbe/Brook came from the same clean galleries
+  and recur as confident/possible runners-up in each other's tests. Two hard-won sourcing lessons:
+  (1) **One Piece fan 名言集 compilations carry a narrator** — Zoro's first embedding was the
+  narrator (never ranked; one test even matched Erwin's deep voice), fixed by switching to a game
+  gallery; game galleries are the One-Piece equivalent of AoT's trusted セリフ切り抜き uploader.
+  (2) **Combat/skill clips are bad validation targets** (battle shouts + SFX, atypical vocals) —
+  a Chopper 必殺技 clip matched Connie; his dialogue clip then hit 0.864. Validate on *dialogue*.
+- **Seed gotcha — AniList mislinks long-running characters.** One Piece characters have had multiple
+  VAs over 25+ years (era recasts, young-version flashbacks, maternity-leave fill-ins), and the
+  seeder picked a secondary/wrong VA for **6 of the 10 Straw Hats** (Zoro→Megumi Urawa instead of
+  Kazuya Nakai, Sanji→Ikue Ōtani [who is Chopper], etc.). All correct seiyuu already existed as
+  actor rows, so the fix was re-linking `vazam_characters.actor_id` — but **always verify the
+  character→VA mapping after seeding a long-running show** before scraping.
 - **Blind test caught the gap in the wild.** A random Connie (Hiro Shimono) clip the
   user supplied: `identify()` ranked **Hiro Shimono #1 — correct** — but at **0.432**,
   just under the 0.50 claim threshold, because we only had his *Natural Voice* and
