@@ -451,15 +451,25 @@ class VazamPipeline:
     # Embedding helpers
     # ------------------------------------------------------------------
 
-    def _speech_tensor(self, audio_path: str, isolate: bool = False) -> torch.Tensor:
+    def _speech_tensor(
+        self, audio_path: str, isolate: bool = False, on_progress=None
+    ) -> torch.Tensor:
         """Load a file as a (1, N) 16 kHz speech tensor.
 
         Runs optional Demucs isolation, then keeps only VAD speech segments
         when use_vad is enabled (falling back to the full audio on failure).
+        ``on_progress`` (optional) is called with a short status string per stage.
         """
-        path = isolate_vocals(audio_path) if isolate else audio_path
+        emit = on_progress or (lambda _m: None)
+
+        if isolate:
+            emit("Isolating music & SFX (Demucs)…")
+            path = isolate_vocals(audio_path)
+        else:
+            path = audio_path
 
         if self.use_vad:
+            emit("Trimming silence (VAD)…")
             try:
                 segments = get_speech_segments(path, self.hf_token)
                 if segments:
@@ -467,6 +477,7 @@ class VazamPipeline:
             except Exception:
                 pass  # fall through to full-file audio
 
+        emit("Loading audio…")
         return load_audio_16k(path)
 
     def embed_file(self, audio_path: str, isolate: bool = False) -> np.ndarray:
@@ -526,6 +537,7 @@ class VazamPipeline:
         isolate: bool = False,
         show_id: Optional[int] = None,
         verify: bool = True,
+        on_progress=None,
     ) -> list[IdentificationResult]:
         """Identify the dominant voice actor in an audio clip.
 
@@ -538,13 +550,19 @@ class VazamPipeline:
             verify:     Cross-check candidates against overlapping sub-windows
                         of the clip; candidates that don't win a majority of
                         windows are demoted from "confident" to "possible".
+            on_progress: Optional callback(str) invoked with a status line per
+                        stage (for streaming progress to a UI).
         """
-        speech = self._speech_tensor(audio_path, isolate=isolate)
+        emit = on_progress or (lambda _m: None)
+        speech = self._speech_tensor(audio_path, isolate=isolate, on_progress=emit)
+        emit("Embedding voiceprint…")
         embedding = get_embedding(speech, device=self.device)
+        emit("Searching reference voices…")
         rows = self.db.search_embeddings(embedding, top_k=top_k, show_id=show_id)
         results = self._results_from_rows(rows)
 
         if verify and results:
+            emit("Verifying across sub-windows…")
             agreement = self._window_agreement(speech, show_id=show_id)
             if agreement is not None:
                 for r in results:

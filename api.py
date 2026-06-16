@@ -39,6 +39,7 @@ load_dotenv()  # loads .env into os.environ (no-op if file absent)
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from db import VazamDB
@@ -88,6 +89,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Single-page recording dashboard (record/upload → identify → character + actor).
+_DASHBOARD = os.path.join(os.path.dirname(__file__), "static", "index.html")
+
+
+@app.get("/", include_in_schema=False)
+def dashboard():
+    """Serve the phone-recording dashboard (falls back to API info if missing)."""
+    if os.path.exists(_DASHBOARD):
+        return FileResponse(_DASHBOARD)
+    return {"name": "Vazam API", "docs": "/docs", "health": "/health"}
 
 
 # ── Pydantic models ──────────────────────────────────────────────────────────
@@ -198,6 +210,63 @@ async def identify(
         os.unlink(path)
 
     return IdentifyResponse(results=[IdentificationMatch(**r.to_dict()) for r in results])
+
+
+@app.post("/identify/stream", tags=["Identification"])
+async def identify_stream(
+    audio: UploadFile = File(..., description="Audio clip (WAV, MP3, M4A)"),
+    isolate: bool = Form(True, description="Run Demucs vocal isolation first"),
+    show_id: Optional[int] = Form(None, description="Restrict search to actors in this show"),
+    top_k: int = Form(5, ge=1, le=20),
+    verify: bool = Form(True),
+):
+    """Same as /identify, but streams newline-delimited JSON progress events.
+
+    Each line is `{"stage": "..."}` as the pipeline advances, then a final
+    `{"done": true, "results": [...]}` (or `{"error": "..."}`). Lets a UI show a
+    live log instead of a blank wait through the (CPU-bound) isolation step.
+    """
+    if db.get_embedding_count() == 0:
+        raise HTTPException(503, "No embeddings in index. Add voice samples first.")
+
+    path = await _save_upload(audio)
+
+    def gen():
+        import json
+        import queue
+        import threading
+
+        q: "queue.Queue[tuple[str, object]]" = queue.Queue()
+
+        def run():
+            try:
+                results = pipeline.identify(
+                    path, top_k=top_k, isolate=isolate, show_id=show_id, verify=verify,
+                    on_progress=lambda m: q.put(("log", m)),
+                )
+                q.put(("done", [r.to_dict() for r in results]))
+            except Exception as exc:  # surface failures to the client log
+                q.put(("error", str(exc)))
+            finally:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+        threading.Thread(target=run, daemon=True).start()
+        yield json.dumps({"stage": "Received clip"}) + "\n"
+        while True:
+            kind, payload = q.get()
+            if kind == "log":
+                yield json.dumps({"stage": payload}) + "\n"
+            elif kind == "done":
+                yield json.dumps({"done": True, "results": payload}) + "\n"
+                return
+            else:
+                yield json.dumps({"error": payload}) + "\n"
+                return
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
 
 
 @app.post("/identify/multi", response_model=MultiIdentifyResponse, tags=["Identification"])

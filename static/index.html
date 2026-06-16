@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Vazam — Voice Actor ID</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --line: #30363d; --txt: #e6edf3;
+    --muted: #8b949e; --accent: #2f81f7; --good: #2ea043; --maybe: #d29922; --none: #6e7681;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; background: var(--bg); color: var(--txt);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 16px; max-width: 640px; margin: 0 auto;
+  }
+  h1 { font-size: 22px; margin: 8px 0 2px; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .seg button { flex: 1; background: transparent; color: var(--txt); border: 0; padding: 10px 14px; font-size: 14px; cursor: pointer; }
+  .seg button.on { background: var(--accent); color: #fff; }
+  .toggle { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--txt); }
+  button.big {
+    width: 100%; padding: 18px; font-size: 17px; font-weight: 600; border: 0; border-radius: 12px;
+    background: var(--accent); color: #fff; cursor: pointer; margin-top: 6px;
+  }
+  button.big:disabled { opacity: .5; cursor: default; }
+  button.rec { background: #da3633; }
+  button.rec.recording { background: #b62324; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: .65; } }
+  .or { text-align: center; color: var(--muted); font-size: 12px; margin: 12px 0; }
+  input[type=file] { width: 100%; color: var(--muted); font-size: 13px; }
+  input[type=text] { width: 100%; background: var(--bg); border: 1px solid var(--line); color: var(--txt); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+  .timer { font-variant-numeric: tabular-nums; font-size: 14px; color: var(--muted); margin-left: auto; }
+  .result { border: 1px solid var(--line); border-left-width: 4px; border-radius: 10px; padding: 14px; margin-bottom: 10px; background: var(--panel); }
+  .result.confident { border-left-color: var(--good); }
+  .result.possible  { border-left-color: var(--maybe); }
+  .result.none      { border-left-color: var(--none); }
+  .char { font-size: 20px; font-weight: 700; }
+  .actor { color: var(--muted); font-size: 14px; }
+  .actor b { color: var(--txt); font-weight: 600; }
+  .meta { display: flex; gap: 10px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .badge { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 20px; font-weight: 700; }
+  .badge.confident { background: rgba(46,160,67,.18); color: #4ac26b; }
+  .badge.possible  { background: rgba(210,153,34,.18); color: #e3b341; }
+  .badge.none      { background: rgba(110,118,129,.18); color: var(--muted); }
+  .bar { flex: 1; height: 6px; min-width: 80px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--accent); }
+  .conf { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); }
+  .spk { font-size: 12px; color: var(--accent); margin: 14px 0 6px; font-weight: 600; }
+  .showline { font-size: 14px; margin-bottom: 10px; padding: 10px 12px; background: rgba(47,129,247,.12); border-radius: 8px; }
+  .alts { margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .status { color: var(--muted); font-size: 14px; text-align: center; padding: 10px; }
+  .progress { margin: 6px 0 14px; display: none; }
+  .progress .lbl { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .progress .lbl .t { font-variant-numeric: tabular-nums; }
+  .progress .track { height: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+  .progress .fill { height: 100%; width: 0%; background: var(--accent); border-radius: 5px; transition: width .25s ease; }
+  .progress .fill.done { background: var(--good); }
+  .log { margin-top: 10px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); max-height: 160px; overflow-y: auto; }
+  .log div { padding: 1px 0; }
+  .log div::before { content: "› "; color: var(--accent); }
+  .log div.ok::before { content: "✓ "; color: var(--good); }
+  .hist h2 { font-size: 14px; color: var(--muted); margin: 4px 0 10px; }
+  .hist .result { opacity: .85; }
+  .err { color: #f85149; font-size: 14px; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>Vaz<span>am</span> — who's that voice?</h1>
+  <div class="sub">Record or upload a clip. Returns the <b>character</b> and the <b>actor</b> who plays them.</div>
+
+  <div class="panel">
+    <label>Mode</label>
+    <div class="seg" id="mode">
+      <button data-mode="identify" class="on">Single voice</button>
+      <button data-mode="show">Scene (who's in it)</button>
+    </div>
+    <div style="margin-top:14px">
+      <label>Show (optional — narrows the search to one cast, much more accurate)</label>
+      <select id="showSel" style="width:100%; background:var(--bg); border:1px solid var(--line); color:var(--txt); border-radius:8px; padding:9px 10px; font-size:14px">
+        <option value="">All shows (open search)</option>
+      </select>
+    </div>
+    <div class="row" style="margin-top:14px; justify-content:space-between">
+      <label class="toggle"><input type="checkbox" id="isolate" checked /> Strip music/SFX (recommended for TV)</label>
+    </div>
+
+    <div class="row" style="margin-top:16px">
+      <button class="big rec" id="recBtn">● Record</button>
+      <span class="timer" id="timer"></span>
+    </div>
+    <div class="or">— or —</div>
+    <label>Upload an audio file (m4a / mp3 / wav)</label>
+    <input type="file" id="fileInput" accept="audio/*" />
+    <button class="big" id="goBtn" disabled style="margin-top:12px">Identify</button>
+
+    <details style="margin-top:14px">
+      <summary>Backend URL</summary>
+      <input type="text" id="apiBase" placeholder="(defaults to this page's origin)" style="margin-top:8px" />
+      <div class="sub" style="margin-top:6px">Set this if the dashboard is served from a different host than the API.</div>
+    </details>
+  </div>
+
+  <div class="progress" id="progress">
+    <div class="lbl"><span id="progStage">Analyzing…</span><span class="t" id="progTime">0.0s</span></div>
+    <div class="track"><div class="fill" id="progFill"></div></div>
+    <div class="log" id="log"></div>
+  </div>
+  <div id="status"></div>
+  <div id="results"></div>
+
+  <div class="hist panel" id="histPanel" style="display:none">
+    <h2>Previous recordings</h2>
+    <div id="history"></div>
+  </div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let mode = "identify";
+let pending = null;       // { blob, name } awaiting Identify
+let mediaRecorder = null, chunks = [], recStart = 0, timerInt = null;
+
+// ── Mode toggle ──────────────────────────────────────────────────────────────
+$("#mode").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  mode = b.dataset.mode;
+  [...$("#mode").children].forEach((c) => c.classList.toggle("on", c === b));
+});
+
+// ── Recording ────────────────────────────────────────────────────────────────
+$("#recBtn").addEventListener("click", async () => {
+  if (mediaRecorder && mediaRecorder.state === "recording") { mediaRecorder.stop(); return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus("Mic recording needs HTTPS or localhost. Use file upload instead.", true); return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    chunks = [];
+    mediaRecorder = new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      const blob = new Blob(chunks, { type: chunks[0]?.type || "audio/webm" });
+      stagePending(blob, "recording");
+      $("#recBtn").classList.remove("recording");
+      $("#recBtn").textContent = "● Record";
+      clearInterval(timerInt); $("#timer").textContent = "";
+    };
+    mediaRecorder.start();
+    recStart = Date.now();
+    $("#recBtn").classList.add("recording");
+    $("#recBtn").textContent = "■ Stop";
+    timerInt = setInterval(() => {
+      const s = (Date.now() - recStart) / 1000;
+      $("#timer").textContent = s.toFixed(1) + "s";
+    }, 100);
+  } catch (err) { setStatus("Mic access denied: " + err.message, true); }
+});
+
+$("#fileInput").addEventListener("change", (e) => {
+  const f = e.target.files[0];
+  if (f) stagePending(f, f.name);
+});
+
+function stagePending(blob, name) {
+  pending = { blob, name };
+  $("#goBtn").disabled = false;
+  setStatus("Ready: " + name + " — tap Identify.");
+}
+
+// ── Submit ───────────────────────────────────────────────────────────────────
+$("#goBtn").addEventListener("click", async () => {
+  if (!pending) return;
+  $("#goBtn").disabled = true;
+  setStatus("Converting audio…");
+  let wav;
+  try {
+    wav = await blobToWav16k(pending.blob);
+  } catch (err) { setStatus("Could not decode that audio: " + err.message, true); $("#goBtn").disabled = false; return; }
+
+  const isolate = $("#isolate").checked;
+  const showId = $("#showSel").value;
+  const fd = new FormData();
+  fd.append("audio", wav, "clip.wav");
+  fd.append("isolate", isolate ? "true" : "false");
+  if (showId) fd.append("show_id", showId);
+
+  clearLog();
+  if (window._trimmed) logLine("Long clip — using first 20s (plenty to identify)", false);
+  setStatus("");
+  const t0 = performance.now();
+  startProgress(isolate ? 45 : 8, "Starting…");
+  try {
+    let data;
+    if (mode === "show") {
+      logStage("Diarizing + inferring show…");
+      const res = await fetch(apiUrl("/identify/show"), { method: "POST", body: fd });
+      if (!res.ok) throw new Error("server " + res.status + ": " + (await res.text()).slice(0, 160));
+      data = await res.json();
+      logLine("Done", true);
+    } else {
+      data = await runStream(apiUrl("/identify/stream"), fd);   // live progress log
+    }
+    const secs = ((performance.now() - t0) / 1000).toFixed(1);
+    stopProgress(true);
+    render(data, pending.name, secs);
+    setStatus("");
+  } catch (err) {
+    stopProgress(false);
+    setStatus("Failed: " + err.message, true);
+  }
+  $("#goBtn").disabled = false;
+});
+
+// ── Rendering ────────────────────────────────────────────────────────────────
+function matchCard(m) {
+  const lvl = m.match_level || "none";
+  const pct = Math.round((m.confidence || 0) * 100);
+  const win = m.window_agreement != null ? ` · win ${Math.round(m.window_agreement * 100)}%` : "";
+  const el = document.createElement("div");
+  el.className = "result " + lvl;
+  el.innerHTML =
+    `<div class="char">${esc(m.character_name) || "—"}</div>` +
+    `<div class="actor">voiced by <b>${esc(m.actor_name)}</b></div>` +
+    `<div class="meta">` +
+      `<span class="badge ${lvl}">${lvl}</span>` +
+      `<div class="bar"><div style="width:${pct}%"></div></div>` +
+      `<span class="conf">${pct}%${win}</span>` +
+    `</div>`;
+  return el;
+}
+
+function render(data, name, secs) {
+  const wrap = document.createElement("div");
+  const head = document.createElement("div");
+  head.className = "sub";
+  head.style.margin = "2px 0 8px";
+  head.textContent = `“${name}” · ${secs}s`;
+  wrap.appendChild(head);
+
+  if (data.results) {                         // /identify
+    const list = data.results;
+    if (!list.length) wrap.appendChild(noMatch());
+    else {
+      wrap.appendChild(matchCard(list[0]));
+      if (list.length > 1) wrap.appendChild(altList(list.slice(1)));
+    }
+  } else if (data.speakers) {                  // /identify/show
+    if (data.show) {
+      const s = document.createElement("div");
+      s.className = "showline";
+      s.innerHTML = `🎬 Likely show: <b>${esc(data.show.title)}</b> ` +
+        `<span class="conf">(${data.show.speakers_matched}/${data.show.speakers_total} speakers)</span>`;
+      wrap.appendChild(s);
+    }
+    const speakers = Object.keys(data.speakers).sort();
+    if (!speakers.length) wrap.appendChild(noMatch());
+    speakers.forEach((spk, i) => {
+      const lab = document.createElement("div");
+      lab.className = "spk"; lab.textContent = "Speaker " + (i + 1);
+      wrap.appendChild(lab);
+      const list = data.speakers[spk];
+      if (!list.length) wrap.appendChild(noMatch());
+      else { wrap.appendChild(matchCard(list[0])); if (list.length > 1) wrap.appendChild(altList(list.slice(1))); }
+    });
+  }
+  $("#results").prepend(wrap);
+  archive(wrap.cloneNode(true));
+}
+
+function altList(rest) {
+  const d = document.createElement("div");
+  d.className = "alts";
+  d.innerHTML = "also considered: " + rest.map((m) =>
+    `${esc(m.character_name)} (${esc(m.actor_name)}, ${Math.round(m.confidence * 100)}%)`).join(" · ");
+  return d;
+}
+function noMatch() { const d = document.createElement("div"); d.className = "result none"; d.innerHTML = `<div class="char">No match</div><div class="actor">no voice cleared the threshold</div>`; return d; }
+function archive(node) {
+  $("#histPanel").style.display = "block";
+  const h = $("#history");
+  h.prepend(node);
+  while (h.children.length > 8) h.removeChild(h.lastChild);
+}
+
+function setStatus(msg, isErr) {
+  const s = $("#status");
+  s.className = isErr ? "status err" : "status";
+  s.textContent = msg || "";
+}
+
+// ── Streamed progress (NDJSON from /identify/stream) ──────────────────────────
+async function runStream(url, fd) {
+  const res = await fetch(url, { method: "POST", body: fd });
+  if (!res.ok) throw new Error("server " + res.status + ": " + (await res.text()).slice(0, 160));
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "", result = null;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+      if (!line) continue;
+      let ev; try { ev = JSON.parse(line); } catch (e) { continue; }
+      if (ev.error) throw new Error(ev.error);
+      else if (ev.done) { result = { results: ev.results }; logLine("Done", true); }
+      else if (ev.stage) { logStage(ev.stage); setStage(ev.stage); }
+    }
+  }
+  if (!result) throw new Error("stream ended without a result");
+  return result;
+}
+
+// ── Progress bar + log ────────────────────────────────────────────────────────
+let progTimer = null, progT0 = 0;
+function startProgress(estSecs, stage) {
+  const p = $("#progress"); p.style.display = "block";
+  const fill = $("#progFill"); fill.classList.remove("done"); fill.style.width = "0%";
+  setStage(stage);
+  progT0 = performance.now();
+  progTimer = setInterval(() => {
+    const el = (performance.now() - progT0) / 1000;
+    $("#progTime").textContent = el.toFixed(1) + "s";
+    fill.style.width = (92 * (1 - Math.exp(-el / (estSecs * 0.6)))).toFixed(1) + "%";
+  }, 120);
+}
+function stopProgress(ok) {
+  if (progTimer) { clearInterval(progTimer); progTimer = null; }
+  const fill = $("#progFill");
+  if (ok) { fill.classList.add("done"); fill.style.width = "100%"; }
+  setTimeout(() => { $("#progress").style.display = "none"; fill.style.width = "0%"; fill.classList.remove("done"); }, ok ? 600 : 0);
+}
+function setStage(t) { $("#progStage").textContent = t; }
+function clearLog() { $("#log").innerHTML = ""; }
+function logStage(t) { logLine(t, false); }
+function logLine(t, ok) {
+  const d = document.createElement("div");
+  if (ok) d.className = "ok";
+  d.textContent = t;
+  $("#log").appendChild(d);
+  $("#log").scrollTop = $("#log").scrollHeight;
+}
+
+// ── Populate show filter ──────────────────────────────────────────────────────
+(async function loadShows() {
+  try {
+    const res = await fetch(apiUrl("/shows"));
+    if (!res.ok) return;
+    const shows = await res.json();
+    const sel = $("#showSel");
+    shows.forEach((s) => {
+      const o = document.createElement("option");
+      o.value = s.id; o.textContent = s.title;
+      sel.appendChild(o);
+    });
+  } catch (e) { /* leave "All shows" only */ }
+})();
+function esc(s) { return (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function apiUrl(ep) { const b = $("#apiBase").value.trim().replace(/\/$/, ""); return (b || "") + ep; }
+
+// ── Audio: decode anything → 16 kHz mono 16-bit WAV ──────────────────────────
+async function blobToWav16k(blob) {
+  const arrayBuf = await blob.arrayBuffer();
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const decoded = await new AC().decodeAudioData(arrayBuf.slice(0));
+  const targetRate = 16000;
+  const MAX_SECONDS = 20;                      // a few seconds is plenty to ID a voice
+  window._trimmed = decoded.duration > MAX_SECONDS;
+  const dur = Math.min(decoded.duration, MAX_SECONDS);
+  const frames = Math.ceil(dur * targetRate);
+  const off = new OfflineAudioContext(1, frames, targetRate);
+  const src = off.createBufferSource();
+  src.buffer = decoded;
+  src.connect(off.destination);
+  src.start();
+  const rendered = await off.startRendering();
+  return encodeWav(rendered.getChannelData(0), targetRate);
+}
+function encodeWav(samples, rate) {
+  const buf = new ArrayBuffer(44 + samples.length * 2);
+  const v = new DataView(buf);
+  const ws = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+  ws(0, "RIFF"); v.setUint32(4, 36 + samples.length * 2, true); ws(8, "WAVE");
+  ws(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  ws(36, "data"); v.setUint32(40, samples.length * 2, true);
+  let o = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    v.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true); o += 2;
+  }
+  return new Blob([buf], { type: "audio/wav" });
+}
+</script>
+</body>
+</html>

@@ -64,6 +64,21 @@ export HF_TOKEN=hf_...                    # accept terms for all three pyannote 
 uvicorn api:app --reload                  # → http://localhost:8000/docs
 ```
 
+### Recording dashboard
+
+A single-page dashboard is served at **`http://localhost:8000/`** — record from the mic (laptop /
+HTTPS) or upload a clip, and it returns the **character** and the **actor** who plays them. It
+streams a live progress log over the (CPU-bound) isolation step via `POST /identify/stream`, has an
+optional **show filter** for closed-set accuracy, and trims long clips to the first 20s client-side.
+For responsive isolation on CPU, run the server with the fast Demucs model:
+
+```bash
+DEMUCS_MODEL=htdemucs uvicorn api:app --host 0.0.0.0 --port 8000
+```
+
+(Mic recording needs a secure context — works on `localhost`; from a phone use file-upload or an
+HTTPS tunnel like `cloudflared tunnel --url http://localhost:8000`.)
+
 A `.env` file in the repo root is loaded automatically. See [`CLAUDE.md`](CLAUDE.md) for the
 full setup, including the three gated pyannote repos (missing the VAD gate silently tanks
 single-speaker accuracy).

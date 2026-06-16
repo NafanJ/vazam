@@ -8,11 +8,43 @@ and Supabase via an in-memory fake client.
 from __future__ import annotations
 
 import io
+import json
 import wave
 
 import pytest
 
 from tests.conftest import make_wav_bytes
+
+
+# ── / (dashboard) ─────────────────────────────────────────────────────────────
+
+def test_dashboard_served(api_client):
+    resp = api_client.get("/")
+    assert resp.status_code == 200
+    # Serves the recording dashboard HTML (or the JSON fallback if it's absent).
+    if "text/html" in resp.headers.get("content-type", ""):
+        assert "Vaz" in resp.text and "Identify" in resp.text
+    else:
+        assert resp.json()["docs"] == "/docs"
+
+
+def test_identify_stream_emits_progress_and_result(api_client):
+    actor_id = api_client.post("/actors", json={"name": "Steve Blum"}).json()["id"]
+    api_client.post(
+        f"/actors/{actor_id}/embeddings",
+        files={"audio": ("s.wav", make_wav_bytes(), "audio/wav")},
+        data={"voice_label": "Natural Voice"},
+    )
+    resp = api_client.post(
+        "/identify/stream",
+        files={"audio": ("c.wav", make_wav_bytes(), "audio/wav")},
+        data={"isolate": "false"},
+    )
+    assert resp.status_code == 200
+    events = [json.loads(l) for l in resp.text.strip().split("\n") if l]
+    assert any("stage" in e for e in events)        # at least one progress line
+    assert events[-1].get("done") is True           # final event carries the result
+    assert isinstance(events[-1]["results"], list)
 
 
 # ── /health ───────────────────────────────────────────────────────────────────
