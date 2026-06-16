@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vazam — Characters</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --line: #30363d; --txt: #e6edf3;
+    --muted: #8b949e; --accent: #2f81f7; --good: #2ea043;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--txt); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 16px; max-width: 820px; margin: 0 auto; }
+  a { color: var(--accent); text-decoration: none; }
+  h1 { font-size: 22px; margin: 6px 0; }
+  h1 span { color: var(--accent); }
+  .top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .controls { display: flex; gap: 12px; align-items: center; margin: 14px 0; flex-wrap: wrap; }
+  input[type=text], input[type=search] { flex: 1; min-width: 180px; background: var(--panel); border: 1px solid var(--line); color: var(--txt); border-radius: 8px; padding: 9px 12px; font-size: 14px; }
+  .toggle { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; cursor: pointer; background: var(--panel); }
+  .row:hover { border-color: var(--accent); }
+  .row img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: var(--bg); flex-shrink: 0; }
+  .row .nm { font-weight: 600; }
+  .row .meta { color: var(--muted); font-size: 12px; }
+  .row .grow { flex: 1; min-width: 0; }
+  .row .grow > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 20px; white-space: nowrap; }
+  .badge.has { background: rgba(46,160,67,.18); color: #4ac26b; }
+  .badge.no { background: rgba(110,118,129,.16); color: var(--muted); }
+  .status { color: var(--muted); font-size: 14px; padding: 12px 0; }
+  /* Modal */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: flex-start; justify-content: center; padding: 20px; overflow-y: auto; }
+  .overlay.open { display: flex; }
+  .modal { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; max-width: 560px; width: 100%; margin-top: 24px; }
+  .modal h2 { margin: 0 0 2px; font-size: 20px; }
+  .modal .who { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+  .modal img { width: 100%; max-height: 240px; object-fit: contain; border-radius: 10px; background: var(--bg); margin-bottom: 14px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 5px; }
+  .modal input[type=text] { width: 100%; }
+  .src { border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; margin-top: 8px; font-size: 13px; }
+  .src .lbl { font-weight: 600; }
+  .src .det { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .src a { word-break: break-all; }
+  .btnrow { display: flex; gap: 10px; margin-top: 18px; }
+  button { border: 0; border-radius: 9px; padding: 11px 16px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .save { background: var(--accent); color: #fff; flex: 1; }
+  .save:disabled { opacity: .6; }
+  .close { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  .savemsg { font-size: 13px; color: var(--good); margin-top: 8px; min-height: 18px; }
+</style>
+</head>
+<body>
+  <div class="top">
+    <h1>Vaz<span>am</span> · Characters</h1>
+    <a href="/">← Dashboard</a>
+  </div>
+  <div class="sub" id="count">Loading…</div>
+
+  <div class="controls">
+    <input type="search" id="search" placeholder="Search name, actor, or show…" />
+    <label class="toggle"><input type="checkbox" id="voicedOnly" /> Only with a voice</label>
+  </div>
+
+  <div id="list"></div>
+  <div class="status" id="status"></div>
+
+  <div class="overlay" id="overlay">
+    <div class="modal" id="modal"></div>
+  </div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let all = [];
+
+async function load() {
+  try {
+    const res = await fetch("/characters");
+    all = await res.json();
+    $("#count").textContent = all.length + " characters · " + all.filter((c) => c.samples > 0).length + " with a voice fingerprint";
+    render();
+  } catch (e) { $("#status").textContent = "Failed to load: " + e.message; }
+}
+
+function render() {
+  const q = $("#search").value.trim().toLowerCase();
+  const voiced = $("#voicedOnly").checked;
+  const rows = all.filter((c) => {
+    if (voiced && !c.samples) return false;
+    if (!q) return true;
+    return [c.name, c.actor_name, c.show_title, c.occupation].some((v) => (v || "").toLowerCase().includes(q));
+  });
+  const list = $("#list");
+  list.innerHTML = "";
+  rows.slice(0, 400).forEach((c) => list.appendChild(rowEl(c)));
+  $("#status").textContent =
+    rows.length > 400 ? "Showing first 400 of " + rows.length + " — refine your search." :
+    rows.length === 0 ? "No matches." : "";
+}
+
+function rowEl(c) {
+  const el = document.createElement("div");
+  el.className = "row";
+  el.onclick = () => openDetail(c.id);
+  const img = c.image_url
+    ? `<img loading="lazy" src="${esc(c.image_url)}" onerror="this.style.visibility='hidden'" />`
+    : `<img style="visibility:hidden" />`;
+  el.innerHTML =
+    img +
+    `<div class="grow">` +
+      `<div class="nm">${esc(c.name)}</div>` +
+      `<div class="meta">${esc(c.actor_name || "—")}${c.show_title ? " · " + esc(c.show_title) : ""}${c.occupation ? " · " + esc(c.occupation) : ""}</div>` +
+    `</div>` +
+    (c.samples
+      ? `<span class="badge has">${c.samples} clip${c.samples === 1 ? "" : "s"}</span>`
+      : `<span class="badge no">no voice</span>`);
+  return el;
+}
+
+async function openDetail(id) {
+  $("#overlay").classList.add("open");
+  $("#modal").innerHTML = `<div class="status">Loading…</div>`;
+  try {
+    const res = await fetch("/characters/" + id);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    renderModal(await res.json());
+  } catch (e) { $("#modal").innerHTML = `<div class="status">Failed: ${esc(e.message)}</div>`; }
+}
+
+function renderModal(c) {
+  const sources = (c.embeddings || []).map((e) => {
+    const urls = (e.source_url || "").split(",").filter(Boolean)
+      .map((u) => `<a href="${esc(u.trim())}" target="_blank" rel="noopener">${esc(u.trim())}</a>`).join("<br>") || "—";
+    const det = [
+      e.audio_source ? "type: " + esc(e.audio_source) : "",
+      e.duration_s != null ? Math.round(e.duration_s) + "s" : "",
+      e.quality_score != null ? "quality " + e.quality_score.toFixed(2) : "",
+      e.verified ? "✓ verified" : "unverified",
+    ].filter(Boolean).join(" · ");
+    return `<div class="src"><div class="lbl">${esc(e.voice_label)}</div><div class="det">${det}</div><div class="det">${urls}</div></div>`;
+  }).join("");
+
+  $("#modal").innerHTML =
+    `<h2>${esc(c.name)}</h2>` +
+    `<div class="who">${esc(c.actor_name || "no actor linked")}${c.show_title ? " · " + esc(c.show_title) : ""}</div>` +
+    (c.image_url ? `<img id="mImg" src="${esc(c.image_url)}" onerror="this.style.display='none'" />` : "") +
+    `<label>Image URL</label><input type="text" id="fImg" value="${esc(c.image_url || "")}" placeholder="https://…" />` +
+    `<label>Occupation</label><input type="text" id="fOcc" value="${esc(c.occupation || "")}" placeholder="e.g. Pirate Captain" />` +
+    `<div class="savemsg" id="saveMsg"></div>` +
+    `<div class="btnrow"><button class="save" id="saveBtn">Save</button><button class="close" id="closeBtn">Close</button></div>` +
+    `<label style="margin-top:18px">Voice embedding source files (${(c.embeddings || []).length})</label>` +
+    (sources || `<div class="status">No voice embeddings for this character yet.</div>`);
+
+  $("#closeBtn").onclick = closeModal;
+  $("#saveBtn").onclick = () => saveDetail(c.id);
+}
+
+async function saveDetail(id) {
+  const btn = $("#saveBtn"); btn.disabled = true; $("#saveMsg").textContent = "Saving…";
+  try {
+    const res = await fetch("/characters/" + id, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image_url: $("#fImg").value, occupation: $("#fOcc").value }),
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const updated = await res.json();
+    $("#saveMsg").textContent = "✓ Saved";
+    // reflect in the cached list
+    const i = all.findIndex((x) => x.id === id);
+    if (i >= 0) { all[i].image_url = updated.image_url; all[i].occupation = updated.occupation; }
+    if ($("#mImg")) { $("#mImg").src = updated.image_url || ""; $("#mImg").style.display = updated.image_url ? "" : "none"; }
+    render();
+  } catch (e) { $("#saveMsg").style.color = "#f85149"; $("#saveMsg").textContent = "Failed: " + e.message; }
+  btn.disabled = false;
+}
+
+function closeModal() { $("#overlay").classList.remove("open"); }
+$("#overlay").addEventListener("click", (e) => { if (e.target === $("#overlay")) closeModal(); });
+$("#search").addEventListener("input", render);
+$("#voicedOnly").addEventListener("change", render);
+function esc(s) { return (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+load();
+</script>
+</body>
+</html>

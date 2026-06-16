@@ -79,6 +79,54 @@ def test_enroll_unknown_actor_404(api_client):
     assert resp.status_code == 404
 
 
+def test_characters_list_and_update(api_client):
+    import api
+    actor_id = api.db.add_actor("Mayumi Tanaka", anilist_id=1)
+    show_id = api.db.add_show("One Piece", anilist_id=2)
+    cid = api.db.add_character("Luffy", show_id, actor_id, image_url="http://x/old.png", anilist_id=3)
+
+    listing = api_client.get("/characters").json()
+    luffy = [c for c in listing if c["id"] == cid][0]
+    assert luffy["name"] == "Luffy"
+    assert luffy["actor_name"] == "Mayumi Tanaka"
+    assert luffy["show_title"] == "One Piece"
+    assert luffy["samples"] == 0
+
+    # Edit image + occupation
+    resp = api_client.patch(
+        f"/characters/{cid}",
+        json={"image_url": "http://x/new.png", "occupation": "Pirate Captain"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["image_url"] == "http://x/new.png"
+    assert body["occupation"] == "Pirate Captain"
+
+    detail = api_client.get(f"/characters/{cid}").json()
+    assert detail["occupation"] == "Pirate Captain"
+    assert "embeddings" in detail
+
+
+def test_character_detail_lists_embedding_sources(api_client, random_embedding):
+    import api
+    actor_id = api.db.add_actor("Kazuya Nakai", anilist_id=10)
+    show_id = api.db.add_show("One Piece", anilist_id=11)
+    cid = api.db.add_character("Zoro", show_id, actor_id, anilist_id=12)
+    api.db.add_embedding(
+        actor_id, random_embedding, character_id=cid, voice_label="Zoro",
+        source_url="https://youtu.be/abc", duration_s=43.0,
+    )
+    detail = api_client.get(f"/characters/{cid}").json()
+    assert len(detail["embeddings"]) == 1
+    assert detail["embeddings"][0]["source_url"] == "https://youtu.be/abc"
+    assert detail["embeddings"][0]["voice_label"] == "Zoro"
+
+
+def test_character_404(api_client):
+    assert api_client.get("/characters/999999").status_code == 404
+    assert api_client.patch("/characters/999999", json={"occupation": "x"}).status_code == 404
+
+
 # ── /health ───────────────────────────────────────────────────────────────────
 
 def test_health_ok(api_client):

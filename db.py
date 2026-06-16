@@ -223,6 +223,102 @@ class VazamDB:
         ).execute()
         return row.data[0]["id"]
 
+    def _all_actor_names(self) -> dict[int, str]:
+        """{actor_id: name} for every actor (paged past the 1000-row API cap)."""
+        names: dict[int, str] = {}
+        start = 0
+        while True:
+            rows = (
+                self._client.table("vazam_actors")
+                .select("id, name")
+                .range(start, start + 999)
+                .execute()
+                .data
+                or []
+            )
+            for r in rows:
+                names[r["id"]] = r["name"]
+            if len(rows) < 1000:
+                break
+            start += 1000
+        return names
+
+    def list_characters(self) -> list[dict]:
+        """All characters with actor, show, and voice-sample count.
+
+        Sorted with voiced characters first (the ones that matter for ID).
+        """
+        chars = (
+            self._client.table("vazam_characters")
+            .select("id, name, occupation, image_url, actor_id, show_id")
+            .execute()
+            .data
+            or []
+        )
+        actor_names = self._all_actor_names()
+        show_titles = {
+            s["id"]: s["title"]
+            for s in (self._client.table("vazam_shows").select("id, title").execute().data or [])
+        }
+        counts: dict[int, int] = {}
+        for e in self._client.table("vazam_embeddings").select("character_id").execute().data or []:
+            cid = e.get("character_id")
+            if cid is not None:
+                counts[cid] = counts.get(cid, 0) + 1
+
+        out = [
+            {
+                "id": c["id"], "name": c["name"], "occupation": c.get("occupation"),
+                "image_url": c.get("image_url"), "actor_id": c.get("actor_id"),
+                "actor_name": actor_names.get(c.get("actor_id")),
+                "show_id": c.get("show_id"), "show_title": show_titles.get(c.get("show_id")),
+                "samples": counts.get(c["id"], 0),
+            }
+            for c in chars
+        ]
+        out.sort(key=lambda x: (-x["samples"], x["show_title"] or "", x["name"]))
+        return out
+
+    def get_character(self, character_id: int) -> Optional[dict]:
+        """A character with its actor/show and the source files of its embeddings."""
+        rows = (
+            self._client.table("vazam_characters").select("*").eq("id", character_id).execute().data
+        )
+        if not rows:
+            return None
+        c = rows[0]
+        actor = self.get_actor(c["actor_id"]) if c.get("actor_id") else None
+        show = self.get_show(c["show_id"]) if c.get("show_id") else None
+        embeddings = (
+            self._client.table("vazam_embeddings")
+            .select("id, voice_label, audio_source, source_url, duration_s, quality_score, verified")
+            .eq("character_id", character_id)
+            .execute()
+            .data
+            or []
+        )
+        return {
+            "id": c["id"], "name": c["name"], "occupation": c.get("occupation"),
+            "image_url": c.get("image_url"), "actor_id": c.get("actor_id"),
+            "actor_name": actor["name"] if actor else None,
+            "show_id": c.get("show_id"), "show_title": show["title"] if show else None,
+            "embeddings": embeddings,
+        }
+
+    def update_character(
+        self, character_id: int, image_url: Optional[str] = None,
+        occupation: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Patch a character's editable fields (image_url, occupation)."""
+        patch: dict = {}
+        if image_url is not None:
+            patch["image_url"] = image_url
+        if occupation is not None:
+            patch["occupation"] = occupation
+        if patch:
+            self._client.table("vazam_characters").update(patch).eq("id", character_id).execute()
+        return self.get_character(character_id)
+
     # ------------------------------------------------------------------
     # Embeddings
     # ------------------------------------------------------------------

@@ -90,8 +90,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Single-page recording dashboard (record/upload → identify → character + actor).
-_DASHBOARD = os.path.join(os.path.dirname(__file__), "static", "index.html")
+# Static single-page UIs (recording dashboard + character admin).
+_STATIC = os.path.join(os.path.dirname(__file__), "static")
+_DASHBOARD = os.path.join(_STATIC, "index.html")
 
 
 @app.get("/", include_in_schema=False)
@@ -100,6 +101,15 @@ def dashboard():
     if os.path.exists(_DASHBOARD):
         return FileResponse(_DASHBOARD)
     return {"name": "Vazam API", "docs": "/docs", "health": "/health"}
+
+
+@app.get("/characters.html", include_in_schema=False)
+def characters_page():
+    """Serve the character admin page (list, edit image/occupation, view sources)."""
+    page = os.path.join(_STATIC, "characters.html")
+    if os.path.exists(page):
+        return FileResponse(page)
+    raise HTTPException(404, "characters.html not found")
 
 
 # ── Pydantic models ──────────────────────────────────────────────────────────
@@ -379,6 +389,38 @@ async def enroll(
          if v["actor_id"] == actor_id and v["voice_label"] == voice_label), 1,
     )
     return {"ok": True, "actor_name": actor["name"], "voice_label": voice_label, "samples": samples}
+
+
+# ── Routes: characters ────────────────────────────────────────────────────────
+
+class CharacterUpdate(BaseModel):
+    image_url: Optional[str] = None
+    occupation: Optional[str] = None
+
+
+@app.get("/characters", tags=["Characters"])
+def list_characters():
+    """All characters with actor, show, and voice-sample count (voiced first)."""
+    return db.list_characters()
+
+
+@app.get("/characters/{character_id}", tags=["Characters"])
+def get_character(character_id: int):
+    """A character's profile + the source files behind its voice embeddings."""
+    character = db.get_character(character_id)
+    if not character:
+        raise HTTPException(404, f"Character {character_id} not found")
+    return character
+
+
+@app.patch("/characters/{character_id}", tags=["Characters"])
+def update_character(character_id: int, body: CharacterUpdate):
+    """Edit a character's image_url and/or occupation."""
+    if db.get_character(character_id) is None:
+        raise HTTPException(404, f"Character {character_id} not found")
+    return db.update_character(
+        character_id, image_url=body.image_url, occupation=body.occupation,
+    )
 
 
 # ── Routes: actors ────────────────────────────────────────────────────────────

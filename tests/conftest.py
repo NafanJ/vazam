@@ -87,6 +87,15 @@ class _FakeQuery:
         self._on_conflict = on_conflict
         return self
 
+    def update(self, data: dict) -> "_FakeQuery":
+        self._op      = "update"
+        self._payload = data
+        return self
+
+    def delete(self) -> "_FakeQuery":
+        self._op = "delete"
+        return self
+
     def eq(self, col: str, val: Any) -> "_FakeQuery":
         self._eq_filters.append((col, val))
         return self
@@ -131,6 +140,20 @@ class _FakeQuery:
             row.setdefault("id", self._store.next_id(self._table))
             rows.append(row)
             return _FakeQueryResult([row])
+
+        if self._op in ("update", "delete"):
+            matched = list(rows)
+            for col, val in self._eq_filters:
+                matched = [r for r in matched if r.get(col) == val]
+            for col, vals in self._in_filters:
+                matched = [r for r in matched if r.get(col) in vals]
+            if self._op == "update":
+                for r in matched:
+                    r.update(self._payload)
+            else:
+                for r in matched:
+                    rows.remove(r)
+            return _FakeQueryResult(matched)
 
         # select
         filtered = list(rows)

@@ -73,6 +73,11 @@ optional **show filter** for closed-set accuracy, and trims long clips to the fi
 It also supports **enrollment** — add a recording to an existing character's fingerprint
 (`GET /voices` to pick, `POST /enroll` to contribute). Phone-mic clips are ideal reference data
 since they match real query conditions, so enrolling correct IDs steadily improves accuracy.
+
+A **character admin page** at **`/characters.html`** lists every character (voiced ones first),
+lets you edit their **image** and **occupation**, and shows the **source files** behind each voice
+embedding (`GET/PATCH /characters`, `GET /characters/{id}`). Occupation needs
+`migrations/002_character_occupation.sql`.
 For responsive isolation on CPU, run the server with the fast Demucs model:
 
 ```bash
