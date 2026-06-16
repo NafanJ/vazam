@@ -64,12 +64,12 @@ the native scaffolding is its own task (see below).
 ## Live validation (June 2026) — proven end-to-end on real data
 
 The pipeline has now been run for real, not just unit-tested. Current Supabase
-project (`rpmcsbgtsvpoczpycozr`) holds **11 embeddings**: 8 consensus "Natural
+project (`rpmcsbgtsvpoczpycozr`) holds **12 embeddings**: 8 consensus "Natural
 Voice" (Steve Blum + 7 of 10 Attack on Titan main-cast seiyuu — Eren/Yuuki Kaji,
 Armin/Marina Inoue, Levi/Hiroshi Kamiya, Hange/Romi Park, Annie/Yuu Shimamura,
 Reiner/Yoshimasa Hosoya, Connie/Hiro Shimono; Erwin/Daisuke Ono, Jean/Kishou
-Taniyama, Mikasa/Yui Ishikawa missed consensus) plus **3 per-character voices**
-(`Eren Yeager`, `Levi`, `Mikasa Ackerman` — see below). Natural-voice quality
+Taniyama, Mikasa/Yui Ishikawa missed consensus) plus **4 per-character voices**
+(`Eren Yeager`, `Levi`, `Mikasa Ackerman`, `Connie Springer` — see below). Natural-voice quality
 scores 0.57–0.72. Note: the Mikasa character voice *recovered* Yui Ishikawa, who
 the consensus scraper had missed — she went from zero embeddings to identifiable.
 
@@ -128,16 +128,20 @@ What the validation runs showed:
   = fan performance (avoid); セリフ切り抜き = actual show line-cuts (use). The
   cross-source agreement guard would likely reject a fan clip paired with a real one,
   but the safe move is to pick `セリフ切り抜き … 声マネ練習用` line-cut sources.
-- **Dominant-speaker selection has a blind spot: ensemble characters.** The tool
-  picks the *dominant* speaker, which is the character in a single-character
-  compilation — great for leads who carry scenes (Eren/Levi/Mikasa). But comic-relief
-  / ensemble characters (Connie) never speak alone: their clips are group scenes
-  (Sasha/Connie/Jean) where someone else dominates, or radio shows (= the actor's
-  *natural* voice, which we already have). Proposed fix: an optional
-  `--select nearest-natural` mode that picks the diarized speaker closest to the
-  actor's stored Natural Voice instead of the dominant one — works for any character
-  whose voice still *ranks* against the natural reference (Connie did, at 0.432).
-  Not yet built.
+- **Dominant-speaker selection had a blind spot: ensemble characters — now fixed.**
+  The default policy picks the *dominant* speaker, which is the character in a
+  single-character compilation — great for leads who carry scenes (Eren/Levi/Mikasa).
+  But comic-relief / ensemble characters (Connie) never speak alone: their clips are
+  group scenes (Sasha/Connie/Jean) where someone else dominates. Fix shipped:
+  `--select nearest-natural` picks the diarized speaker closest to the actor's stored
+  Natural Voice instead of the dominant one — works for any character whose voice
+  still *ranks* against the natural reference (Connie did, at 0.432). **Proven:**
+  ingested `Connie Springer` (Hiro Shimono) from a Sasha/Connie/Jean group clip —
+  nearest-natural correctly pulled Connie (43s) out of the group, and the blind clip
+  (`woO8uJkBDk0`) that previously stalled at **0.432 (no claim)** now returns
+  **Hiro Shimono *as Connie Springer* 0.675, window-verified 1.00** (+0.243, over the
+  0.50 claim line). Lands at "possible" not "confident" — 0.675 is just under the
+  uncalibrated 0.70 bar (a threshold-tuning question, not a selection failure).
 
 Runtime fixes landed this session (all committed/pushed): yt-dlp EJS challenge
 solver + shorter download sections (`1f57695`), Japanese-language search queries
@@ -185,11 +189,10 @@ cross-condition takes pull together. Deferred — 7/10 is enough for show infere
      for both, plus Erwin), then other shows. Lazily, top-billed only (anti-goal: never
      bulk-scrape character clips). Each add is self-measuring — re-run `identify/show`
      on a *conversation* scene with that character.
-   - **Build `--select nearest-natural`** (see Live validation) so the tool reaches
-     *ensemble* characters like Connie, who never carry a scene solo and so defeat the
-     current dominant-speaker selection. Picks the diarized speaker nearest the actor's
-     stored Natural Voice instead. ~15 lines + tests; then ingest Connie from a group
-     clip and confirm the blind-test clip flips from 0.432 (no claim) to a confident ID.
+   - ~~**Build `--select nearest-natural`**~~ ✅ **Done + proven on Connie** (see the
+     ensemble blind-spot note in Live validation — blind clip flipped 0.432 no-claim →
+     0.675 verified `as Connie Springer`). Reaches ensemble characters who never carry a
+     scene solo and so defeat dominant-speaker selection.
 5. **Data plan build order** (from `data-acquisition-plan.md`):
    entity-resolution schema change (cross-source actor IDs — do first, painful to
    retrofit) → TMDB resolver alongside AniList → `show_ingestion_status` +

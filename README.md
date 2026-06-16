@@ -3,8 +3,8 @@
 Point your phone at any animated show, anime, or video game and instantly know which voice actor is performing.
 
 > **Status — June 2026.** The backend pipeline is validated end-to-end on real audio.
-> **11 reference voices** are stored: 8 consensus "Natural Voice" embeddings (Steve Blum +
-> 7 *Attack on Titan* seiyuu) plus **3 per-character voices** (Eren, Levi, Mikasa). A held-out
+> **12 reference voices** are stored: 8 consensus "Natural Voice" embeddings (Steve Blum +
+> 7 *Attack on Titan* seiyuu) plus **4 per-character voices** (Eren, Levi, Mikasa, Connie). A held-out
 > interview matched its actor at cosine **0.884**, and `/identify/show` infers the show from a
 > raw multi-speaker anime scene with no hints. Full validation log + roadmap:
 > [`docs/next-steps.md`](docs/next-steps.md). Architecture & conventions: [`CLAUDE.md`](CLAUDE.md).
@@ -108,9 +108,13 @@ Measured impact (June 2026, validated on real *Attack on Titan* scenes):
 | **Eren** (Yuuki Kaji) | 0.525 — near-tie with a rival (+0.020) | **0.686**, decisive (+0.181 margin) |
 | **Levi** (Hiroshi Kamiya) | natural didn't rank — would mis-ID as the wrong actor | **0.917**, confident |
 | **Mikasa** (Yui Ishikawa) | unidentifiable (actor had no embedding) | **0.690**, beats the prior wrong match |
+| **Connie** (Hiro Shimono) | 0.432 — correct but below the claim line | **0.675**, verified, over the line |
 
 For Levi and Mikasa the per-character embedding turned an outright *wrong* answer into a correct
-one. (Mikasa also recovered a seiyuu the consensus scraper had missed.)
+one. (Mikasa also recovered a seiyuu the consensus scraper had missed.) Connie — an *ensemble*
+character who never carries a scene solo — was added with `--select nearest-natural`, which picks
+the diarized speaker nearest the actor's Natural Voice instead of the loudest, so it works on group
+clips where the character isn't the dominant speaker.
 
 ### Show-aware search
 
