@@ -3,8 +3,8 @@
 Point your phone at any animated show, anime, or video game and instantly know which voice actor is performing.
 
 > **Status — June 2026.** The backend pipeline is validated end-to-end on real audio.
-> **14 reference voices** are stored: 8 consensus "Natural Voice" embeddings (Steve Blum +
-> 7 *Attack on Titan* seiyuu) plus **6 per-character voices** (Eren, Levi, Mikasa, Connie, Annie, Hange). A held-out
+> **15 reference voices** are stored: 8 consensus "Natural Voice" embeddings (Steve Blum +
+> 7 *Attack on Titan* seiyuu) plus **7 per-character voices** (Eren, Levi, Mikasa, Connie, Annie, Hange, Erwin). A held-out
 > interview matched its actor at cosine **0.884**, and `/identify/show` infers the show from a
 > raw multi-speaker anime scene with no hints. Full validation log + roadmap:
 > [`docs/next-steps.md`](docs/next-steps.md). Architecture & conventions: [`CLAUDE.md`](CLAUDE.md).
@@ -111,9 +111,10 @@ Measured impact (June 2026, validated on real *Attack on Titan* scenes):
 | **Connie** (Hiro Shimono) | 0.432 — correct but below the claim line | **0.675**, verified, over the line |
 | **Annie** (Yuu Shimamura) | natural didn't rank in-scene | **0.796**, confident — beat the co-star's seiyuu |
 | **Hange** (Romi Park) | natural didn't rank in-scene | **0.543**, possible, window-verified |
+| **Erwin** (Daisuke Ono) | unidentifiable (actor had no embedding) | **0.639**, possible, window-verified 1.00 |
 
-For Levi, Mikasa, Annie, and Hange the per-character embedding turned a wrong-or-no answer into a
-correct one. (Mikasa also recovered a seiyuu the consensus scraper had missed.) Connie — an *ensemble*
+For Levi, Mikasa, Annie, Hange, and Erwin the per-character embedding turned a wrong-or-no answer
+into a correct one. (Mikasa and Erwin also recovered seiyuu the consensus scraper had missed.) Connie — an *ensemble*
 character who never carries a scene solo — was added with `--select nearest-natural`, which picks
 the diarized speaker nearest the actor's Natural Voice instead of the loudest, so it works on group
 clips where the character isn't the dominant speaker.

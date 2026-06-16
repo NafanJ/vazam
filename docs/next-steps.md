@@ -64,13 +64,14 @@ the native scaffolding is its own task (see below).
 ## Live validation (June 2026) — proven end-to-end on real data
 
 The pipeline has now been run for real, not just unit-tested. Current Supabase
-project (`rpmcsbgtsvpoczpycozr`) holds **14 embeddings**: 8 consensus "Natural
+project (`rpmcsbgtsvpoczpycozr`) holds **15 embeddings**: 8 consensus "Natural
 Voice" (Steve Blum + 7 of 10 Attack on Titan main-cast seiyuu — Eren/Yuuki Kaji,
 Armin/Marina Inoue, Levi/Hiroshi Kamiya, Hange/Romi Park, Annie/Yuu Shimamura,
 Reiner/Yoshimasa Hosoya, Connie/Hiro Shimono; Erwin/Daisuke Ono, Jean/Kishou
-Taniyama, Mikasa/Yui Ishikawa missed consensus) plus **6 per-character voices**
+Taniyama, Mikasa/Yui Ishikawa missed consensus) plus **7 per-character voices**
 (`Eren Yeager`, `Levi`, `Mikasa Ackerman`, `Connie Springer`, `Annie Leonhart`,
-`Hange` — see below). Natural-voice quality
+`Hange`, `Erwin Smith` — see below). Note: the Mikasa and Erwin character voices
+each *recovered* a seiyuu the consensus scraper had missed (zero prior embeddings). Natural-voice quality
 scores 0.57–0.72. Note: the Mikasa character voice *recovered* Yui Ishikawa, who
 the consensus scraper had missed — she went from zero embeddings to identifiable.
 
@@ -128,6 +129,12 @@ What the validation runs showed:
   Method note: single-speaker `identify()` first locked onto **Eren** on an Annie *combat*
   clip (she barely speaks there) — taciturn/ensemble characters need a *dialogue* scene and
   diarized `identify_multi`, not a single-speaker pass.
+- **Erwin recovered a missed seiyuu.** Daisuke Ono had **zero** embeddings (consensus miss),
+  so he was unidentifiable. Ingested `Erwin Smith` from the trusted uploader's line-cut
+  (`SGDAuVuWNyg`, htdemucs); on the held-out charge-speech scene (`H13ID0ymOis`) the speaker
+  now matches **`Erwin Smith` 0.639, possible, window-verified 1.00**, beating Yoshimasa
+  Hosoya `[Natural]` 0.489 by 0.150. Same recovery pattern as Mikasa — a character voice
+  makes a previously-absent actor identifiable.
 - **Blind test caught the gap in the wild.** A random Connie (Hiro Shimono) clip the
   user supplied: `identify()` ranked **Hiro Shimono #1 — correct** — but at **0.432**,
   just under the 0.50 claim threshold, because we only had his *Natural Voice* and
@@ -195,11 +202,12 @@ cross-condition takes pull together. Deferred — 7/10 is enough for show infere
    Levi, *and* Mikasa** (`add_character_voice.py`; see Live validation — Eren
    0.525→0.686, Levi 0.917 rescuing a mis-ID, Mikasa 0.690 recovering a missed actor).
    Remaining work, in rough order:
-   - **Scale to more leads** — ✅ **Annie + Hange done** (both via the trusted
+   - **Scale to more leads** — ✅ **Annie, Hange, and Erwin done** (all via the trusted
      `セリフ切り抜き … 声マネ練習用` uploader, ingested with the fast `htdemucs` model;
-     validated below). **Erwin/Daisuke Ono** is the next obvious add from the same uploader,
-     then other shows. Lazily, top-billed only (anti-goal: never bulk-scrape character
-     clips). Each add is self-measuring — run diarized `identify_multi` on a *conversation*
+     validated below; Erwin recovered a zero-embedding seiyuu). The AoT main cast is now
+     well covered — **branching to a second show** is the next move. Lazily, top-billed only
+     (anti-goal: never bulk-scrape character clips). Each add is self-measuring — run diarized
+     `identify_multi` on a *conversation*
      scene with that character (single-speaker `identify` locks onto whoever talks most,
      which for a taciturn character like Annie is the co-star). **For batch ingestion, use
      `--demucs-model htdemucs`** (or `DEMUCS_MODEL=htdemucs`): isolation is the dominant
