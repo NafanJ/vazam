@@ -211,6 +211,37 @@ These are uncalibrated starting values — they'll be tuned against the benchmar
 | `SUPABASE_KEY` | _(empty)_ | Supabase service-role key (writes require service role) |
 | `HF_TOKEN` | _(empty)_ | HuggingFace token — VAD + diarization (pyannote) |
 | `DEVICE` | auto | `cuda` or `cpu` (auto-detects CUDA) |
+| `DEMUCS_MODEL` | `htdemucs_ft` | Isolation model; set `htdemucs` for ~3.7× faster CPU |
+| `VAZAM_AUTH_USER` / `VAZAM_AUTH_PASS` | _(empty)_ | If both set, HTTP Basic auth gates every route except `/health`. **Set these before exposing publicly** |
+
+## Deploying (Docker + Cloudflare Tunnel)
+
+The repo ships a CPU `Dockerfile` and `docker-compose.yml`. The compose stack is the
+**vazam** API plus an optional **cloudflared** service for a public, HTTPS hostname.
+
+```bash
+# .env (next to docker-compose.yml) — never commit it:
+#   SUPABASE_URL=…  SUPABASE_KEY=…  HF_TOKEN=…
+#   VAZAM_AUTH_USER=you  VAZAM_AUTH_PASS=a-long-password
+#   CLOUDFLARE_TUNNEL_TOKEN=…           # from the Cloudflare Zero Trust dashboard
+docker compose up -d --build
+```
+
+In Cloudflare Zero Trust, add a **public hostname** (`vazam.yourdomain.com`) routing to
+**`http://vazam:8000`**. HTTPS is terminated at Cloudflare's edge — which is also what lets the
+in-browser **record button work on your phone from anywhere**. Already running cloudflared? Drop
+the bundled service and just add the ingress rule (put that cloudflared on the `vazam-tunnel`
+network).
+
+> ⚠️ **Auth is mandatory for public exposure.** The API has open CORS and several **mutating,
+> unauthenticated** endpoints (`/enroll`, `PATCH /characters`, `/actors`). Setting
+> `VAZAM_AUTH_USER`/`VAZAM_AUTH_PASS` puts HTTP Basic in front of everything (the browser prompts
+> once, then auto-sends credentials). Without them the API is wide open — fine on `localhost`, not
+> on the internet.
+
+Notes: models (~535 MB) download into the `vazam-models` volume on the **first** request (that one
+is slow); afterwards they're cached. Accept the pyannote model terms for your `HF_TOKEN` (see Quick
+start). `.env` and the model volume hold all the secrets/state — the image itself has neither.
 
 ## Mobile app
 

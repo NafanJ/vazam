@@ -27,7 +27,9 @@ Environment variables
 
 from __future__ import annotations
 
+import base64
 import os
+import secrets
 import tempfile
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -37,7 +39,7 @@ from dotenv import load_dotenv
 load_dotenv()  # loads .env into os.environ (no-op if file absent)
 
 import numpy as np
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -49,6 +51,24 @@ from pipeline import VazamPipeline
 
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 DEVICE   = os.getenv("DEVICE",   "")
+
+# Optional HTTP Basic auth. When both are set (e.g. for a public deployment),
+# every route except /health requires these credentials; unset = open (local dev).
+AUTH_USER = os.getenv("VAZAM_AUTH_USER", "")
+AUTH_PASS = os.getenv("VAZAM_AUTH_PASS", "")
+
+
+def _basic_auth_ok(authorization: str) -> bool:
+    """True if the request may proceed (auth disabled, or credentials match)."""
+    if not (AUTH_USER and AUTH_PASS):
+        return True
+    if not authorization.startswith("Basic "):
+        return False
+    try:
+        user, _, pwd = base64.b64decode(authorization[6:]).decode().partition(":")
+    except Exception:
+        return False
+    return secrets.compare_digest(user, AUTH_USER) and secrets.compare_digest(pwd, AUTH_PASS)
 
 # ── App state ────────────────────────────────────────────────────────────────
 
@@ -89,6 +109,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _basic_auth_middleware(request, call_next):
+    """Gate every route behind HTTP Basic when VAZAM_AUTH_USER/PASS are set.
+
+    /health is always open so container healthchecks keep working.
+    """
+    if request.url.path != "/health" and not _basic_auth_ok(
+        request.headers.get("authorization", "")
+    ):
+        return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="Vazam"'})
+    return await call_next(request)
 
 # Static single-page UIs (recording dashboard + character admin).
 _STATIC = os.path.join(os.path.dirname(__file__), "static")

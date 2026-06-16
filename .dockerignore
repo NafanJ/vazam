@@ -1,0 +1,24 @@
+# Keep the build context (and image) small.
+.git
+.venv
+venv
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.env
+*.env
+
+# Mobile app (not part of the backend image)
+app/node_modules
+app/ios
+app/android
+
+# Local data / scratch
+samples/
+separated/
+benchmark/**/*.wav
+benchmark/**/*.mp3
+benchmark/**/*.m4a
+models/
+*.log

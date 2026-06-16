@@ -1,0 +1,66 @@
+# Vazam backend service. Drop this into your existing stack (or run standalone
+# with `docker compose up -d`).
+#
+# Secrets come from a .env file next to this compose (SUPABASE_URL, SUPABASE_KEY,
+# HF_TOKEN). The model cache is a named volume so the ~535 MB of models download
+# only once.
+#
+# Exposure (pick one — see README "Deploying" / discuss with Claude):
+#   • Tailscale  — private, no public surface; reach it from your phone anywhere.
+#   • Cloudflare Tunnel + Access — public hostname, gated to your identity.
+#   • Reverse proxy (Traefik/Caddy) + auth — the `labels:` block shows a Traefik
+#     example; uncomment and adapt to your proxy/network.
+
+services:
+  vazam:
+    build: .
+    image: vazam:latest
+    container_name: vazam
+    restart: unless-stopped
+    env_file: .env                 # SUPABASE_URL, SUPABASE_KEY, HF_TOKEN
+    environment:
+      DEVICE: cpu
+      DEMUCS_MODEL: htdemucs       # fast isolation on CPU
+      # HTTP Basic auth — REQUIRED before exposing publicly (the API mutates data
+      # with no other auth). Set these in .env. Unset = open (local only).
+      VAZAM_AUTH_USER: ${VAZAM_AUTH_USER:-}
+      VAZAM_AUTH_PASS: ${VAZAM_AUTH_PASS:-}
+    volumes:
+      - vazam-models:/models       # persistent model cache (TORCH_HOME / HF_HOME)
+    expose:
+      - "8000"                     # internal; cloudflared reaches it over the shared network
+    # ports:
+    #   - "8000:8000"              # uncomment for direct LAN access / testing
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    networks: [default, vazam-tunnel]
+
+  # ── Cloudflare Tunnel ───────────────────────────────────────────────────────
+  # Already running cloudflared elsewhere? Skip this service and just add an
+  # ingress hostname → http://vazam:8000 (put that cloudflared on the
+  # `vazam-tunnel` network). Otherwise this runs a dedicated tunnel:
+  #   1. Create a tunnel in the Cloudflare Zero Trust dashboard, add a public
+  #      hostname (vazam.yourdomain.com) → Service http://vazam:8000.
+  #   2. Put the tunnel token in .env as CLOUDFLARE_TUNNEL_TOKEN.
+  # HTTPS is terminated at Cloudflare's edge (so the phone mic-record button
+  # works), and VAZAM_AUTH_* basic auth gates the (otherwise open) API.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: vazam-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - vazam
+    networks: [vazam-tunnel]
+
+volumes:
+  vazam-models:
+
+networks:
+  vazam-tunnel:

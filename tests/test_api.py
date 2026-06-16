@@ -7,6 +7,7 @@ and Supabase via an in-memory fake client.
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import wave
@@ -125,6 +126,24 @@ def test_character_detail_lists_embedding_sources(api_client, random_embedding):
 def test_character_404(api_client):
     assert api_client.get("/characters/999999").status_code == 404
     assert api_client.patch("/characters/999999", json={"occupation": "x"}).status_code == 404
+
+
+def test_basic_auth_helper(monkeypatch):
+    import api
+    # Disabled when no credentials are configured (local dev / tests).
+    monkeypatch.setattr(api, "AUTH_USER", "")
+    monkeypatch.setattr(api, "AUTH_PASS", "")
+    assert api._basic_auth_ok("") is True
+
+    # Enforced when set.
+    monkeypatch.setattr(api, "AUTH_USER", "joe")
+    monkeypatch.setattr(api, "AUTH_PASS", "secret")
+    good = "Basic " + base64.b64encode(b"joe:secret").decode()
+    bad = "Basic " + base64.b64encode(b"joe:wrong").decode()
+    assert api._basic_auth_ok(good) is True
+    assert api._basic_auth_ok(bad) is False
+    assert api._basic_auth_ok("") is False
+    assert api._basic_auth_ok("Bearer x") is False
 
 
 # ── /health ───────────────────────────────────────────────────────────────────
