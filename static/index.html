@@ -328,7 +328,7 @@
 "use strict";
 /* ───────────── Vazam Identify — vanilla controller ─────────────
    Endpoints (same-origin, Basic auth handled by browser):
-     POST /identify/stream   POST /identify/show   POST /enroll
+     POST /identify   POST /identify/show   POST /enroll
      GET  /voices  GET /shows */
 
 const $  = (s,r=document)=>r.querySelector(s);
@@ -345,6 +345,7 @@ const initial = n => (n||'?').trim().charAt(0).toUpperCase() || '?';
 const state = {
   mode:'single', isolate:true, showId:'',
   clip:null,        // {blob, name}
+  running:false,    // an identify is in flight — blocks re-submit
   lastResultMatch:null,
   history: load('vazam_history', []),
 };
@@ -423,7 +424,7 @@ async function stageBlob(blob, name){
     state.clip = {blob:wav, name};
     $('#staged').classList.add('show');
     $('#stagedLabel').innerHTML = `<b>Ready: ${name}</b> — tap Identify.`;
-    $('#identifyBtn').disabled=false; $('#identifyBtn').classList.add('ready');
+    if(!state.running){ $('#identifyBtn').disabled=false; $('#identifyBtn').classList.add('ready'); }
     $('#enrollBtn').disabled=false;
   }catch(e){
     showError('Could not decode audio — try a different clip. ('+e.message+')');
@@ -435,8 +436,15 @@ function clearClip(){
 }
 
 /* ═══════════════ IDENTIFY ═══════════════ */
+function setBusy(on){
+  const b=$('#identifyBtn');
+  b.disabled = on || !state.clip;
+  b.textContent = on ? 'Identifying…' : 'Identify';
+  b.classList.toggle('ready', !on && !!state.clip);
+}
 async function identify(){
-  if(!state.clip) return;
+  if(!state.clip || state.running) return;     // ignore re-entry while one is in flight
+  state.running = true; setBusy(true);
   $('#errBanner').classList.remove('show');
   $('#results').innerHTML=''; state.lastResultMatch=null;
   showProgress(true);
@@ -448,25 +456,27 @@ async function identify(){
     if(state.mode==='scene') await runScene(fd); else await runSingle(fd);
   }catch(e){
     showProgress(false); showError('Analysis failed — '+e.message);
+  }finally{
+    state.running = false; setBusy(false);
   }
 }
 
 async function runSingle(fd){
+  // Plain POST (not the NDJSON stream): a single short-lived request survives
+  // the Cloudflare tunnel / mobile network handoffs that drop a long-held
+  // streaming connection. Progress stages are simulated client-side while it runs.
   const t0=Date.now(); const el=setInterval(()=>$('#progElapsed').textContent=fmtTime((Date.now()-t0)/1000)+' elapsed · usually 8–45s',200);
-  let res = await call('/identify/stream', {method:'POST', body:fd});
-  const reader = res.body.getReader(); const dec=new TextDecoder(); let bufStr='';
-  while(true){
-    const {done,value}=await reader.read(); if(done) break;
-    bufStr += dec.decode(value,{stream:true});
-    let nl; while((nl=bufStr.indexOf('\n'))>=0){
-      const line=bufStr.slice(0,nl).trim(); bufStr=bufStr.slice(nl+1);
-      if(!line) continue; let obj; try{obj=JSON.parse(line)}catch(_){continue}
-      if(obj.stage) pushStage(obj.stage);
-      if(obj.error){ clearInterval(el); showProgress(false); showError(obj.error); return; }
-      if(obj.done){ clearInterval(el); finishStages(); showProgress(false); renderSingle(obj.results||[]); }
-    }
+  const stages=[state.isolate?'Isolating music & SFX (Demucs)…':null,'Trimming silence (VAD)…','Embedding voiceprint…','Searching reference voices…','Verifying across sub-windows…'].filter(Boolean);
+  const timers=stages.map((s,i)=>setTimeout(()=>pushStage(s), i*600));
+  try{
+    const res=await call('/identify', {method:'POST', body:fd});
+    const data=await res.json();
+    timers.forEach(clearTimeout); clearInterval(el);
+    finishStages(); showProgress(false); renderSingle(data.results||[]);
+  }catch(e){
+    timers.forEach(clearTimeout); clearInterval(el);
+    throw e;   // identify() handles showProgress(false) + error banner
   }
-  clearInterval(el);
 }
 
 async function runScene(fd){
