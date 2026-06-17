@@ -487,6 +487,33 @@ async def enroll(
     return {"ok": True, "actor_name": actor["name"], "voice_label": voice_label, "samples": samples}
 
 
+class UrlFetch(BaseModel):
+    url: str
+    max_seconds: int = Field(240, ge=5, le=600)
+
+
+@app.post("/fetch/url", tags=["Identification"])
+def fetch_url(body: UrlFetch):
+    """Download a clip from a URL and return the audio bytes.
+
+    Lets the dashboard play and trim the clip (client-side) before sending just
+    the chosen selection to /identify or /enroll — useful when a video has
+    several speakers and you want to isolate one voice.
+    """
+    import tempfile
+
+    import ytclip
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            path = ytclip.download_clip(body.url, tmp, max_seconds=body.max_seconds)
+        except ytclip.DownloadError as exc:
+            raise HTTPException(400, str(exc))
+        with open(path, "rb") as f:
+            data = f.read()
+    return Response(content=data, media_type="audio/mpeg",
+                    headers={"Content-Disposition": "inline; filename=clip.mp3"})
+
+
 class UrlEnroll(BaseModel):
     url: str
     actor_id: int

@@ -131,6 +131,15 @@
     padding:11px 14px;border-radius:11px}
   .mini-btn.ghost{background:var(--raise);border:1px solid var(--line);color:var(--txt)}
 
+  /* link-clip trim controls */
+  .trim{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+  .trimrow{display:flex;align-items:center;gap:9px}
+  .trimrow label{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted2);width:38px}
+  .trimrow input[type=range]{flex:1;accent-color:var(--accent)}
+  .tnow{font-size:13px;background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:5px 9px;color:var(--txt)}
+  .trimsel{display:flex;align-items:center;justify-content:space-between;font-size:13px;color:var(--txt);font-variant-numeric:tabular-nums}
+  .tplay{font-size:12px;background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:5px 10px;color:var(--txt)}
+
   /* progress */
   .progress{display:none;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:16px;flex-direction:column;gap:14px}
   .progress.show{display:flex}
@@ -300,13 +309,22 @@
 
     <!-- FROM A LINK -->
     <details id="urlWrap">
-      <summary>🔗 Identify / enroll from a YouTube link <span>⌄</span></summary>
+      <summary>🔗 From a YouTube link <span>⌄</span></summary>
       <div class="body">
-        <div class="field"><label>Video / clip URL (single voice)</label><input type="text" id="urlInput" inputmode="url" placeholder="https://youtu.be/…"></div>
-        <button class="mini-btn" id="urlIdentifyBtn">Identify from link</button>
-        <div class="field" style="margin-top:4px"><label>…or add this link to a character's fingerprint</label><select id="urlEnrollSelect"><option value="">Loading voices…</option></select></div>
-        <button class="mini-btn ghost" id="urlEnrollBtn">Add link to fingerprint</button>
-        <div class="hero-sub" style="margin-top:2px">Downloads a short clip server-side — slower than an upload, and the link must be reachable.</div>
+        <div class="field"><label>Video / clip URL</label><input type="text" id="urlInput" inputmode="url" placeholder="https://youtu.be/…"></div>
+        <button class="mini-btn" id="urlLoadBtn">Load clip</button>
+        <div id="trimPanel" style="display:none">
+          <audio id="clipAudio" controls style="width:100%;margin-top:10px"></audio>
+          <div class="trim">
+            <div class="trimrow"><label>Start</label><input type="range" id="trimStart" min="0" step="0.1" value="0"><button class="tnow" id="startNow" title="set to playhead">⏱</button></div>
+            <div class="trimrow"><label>End</label><input type="range" id="trimEnd" min="0" step="0.1" value="0"><button class="tnow" id="endNow" title="set to playhead">⏱</button></div>
+            <div class="trimsel"><span id="selLbl">0.0 – 0.0s</span><button class="tplay" id="playSel">▶ selection</button></div>
+          </div>
+          <button class="mini-btn" id="urlIdentifyBtn">Identify selection</button>
+          <div class="field" style="margin-top:8px"><label>…or add the selection to a character's fingerprint</label><select id="urlEnrollSelect"><option value="">Loading voices…</option></select></div>
+          <button class="mini-btn ghost" id="urlEnrollBtn">Add selection to fingerprint</button>
+        </div>
+        <div class="hero-sub" style="margin-top:6px">Downloads up to ~4 min server-side — play it, drag the handles to the voice you want, then identify/enroll just that selection (uses up to 30s of it).</div>
       </div>
     </details>
 
@@ -454,9 +472,8 @@ function setBusy(on){
   b.disabled = on || !state.clip;
   b.textContent = on ? 'Identifying…' : 'Identify';
   b.classList.toggle('ready', !on && !!state.clip);
-  // a link request blocks (and is blocked by) the main flow too
-  const ub=$('#urlIdentifyBtn'), ueb=$('#urlEnrollBtn');
-  if(ub) ub.disabled=on; if(ueb) ueb.disabled=on;
+  // link-clip buttons block (and are blocked by) the main flow too
+  ['#urlLoadBtn','#urlIdentifyBtn','#urlEnrollBtn'].forEach(id=>{ const b=$(id); if(b) b.disabled=on; });
 }
 async function identify(){
   if(!state.clip || state.running) return;     // ignore re-entry while one is in flight
@@ -610,38 +627,70 @@ async function enrollStaged(){
   }catch(e){ btn.textContent='✕ failed'; btn.disabled=false; }
 }
 
-/* ─── from a YouTube/clip link ─── */
-async function identifyUrl(){
+/* ─── from a YouTube/clip link: fetch → play → trim → identify/enroll ─── */
+let clipBuf=null;                       // decoded AudioBuffer of the fetched clip
+const TRIM_MAX_SECONDS=30;              // cap on the rendered selection
+
+async function loadClip(){
   const url=$('#urlInput').value.trim();
   if(!url){ showError('Paste a link first.'); return; }
+  if(state.running) return;
+  const btn=$('#urlLoadBtn'); const orig=btn.textContent; btn.disabled=true; btn.textContent='Downloading…';
+  $('#errBanner').classList.remove('show');
+  try{
+    const res=await call('/fetch/url',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+    const blob=await res.blob();
+    $('#clipAudio').src=URL.createObjectURL(blob);
+    clipBuf=await new (window.AudioContext||window.webkitAudioContext)().decodeAudioData(await blob.arrayBuffer());
+    const dur=clipBuf.duration;
+    const s=$('#trimStart'), e=$('#trimEnd');
+    s.max=dur; e.max=dur; s.value=0; e.value=Math.min(dur, TRIM_MAX_SECONDS);
+    updateSel();
+    $('#trimPanel').style.display='block';
+    btn.textContent='Reload clip';
+  }catch(err){ showError('Could not load that link — '+err.message); btn.textContent=orig; }
+  btn.disabled=false;
+}
+function selRange(){ let a=+$('#trimStart').value, b=+$('#trimEnd').value; return a<=b?[a,b]:[b,a]; }
+function updateSel(){ const [a,b]=selRange(); const d=b-a; $('#selLbl').textContent=`${a.toFixed(1)} – ${b.toFixed(1)}s (${d.toFixed(1)}s${d>TRIM_MAX_SECONDS?`, uses first ${TRIM_MAX_SECONDS}s`:''})`; }
+function playSelection(){
+  const a=$('#clipAudio'); const [s,e]=selRange(); a.currentTime=s; a.play();
+  const tick=()=>{ if(a.currentTime>=e){ a.pause(); a.removeEventListener('timeupdate',tick); } };
+  a.addEventListener('timeupdate',tick);
+}
+async function renderSelectionWav(){
+  const [s,e]=selRange();
+  const rate=16000, dur=Math.max(0.3, Math.min(e-s, TRIM_MAX_SECONDS));
+  const off=new OfflineAudioContext(1, Math.ceil(rate*dur), rate);
+  const src=off.createBufferSource(); src.buffer=clipBuf; src.connect(off.destination); src.start(0, s, dur);
+  const rendered=await off.startRendering();
+  return encodeWav(rendered.getChannelData(0), rate);
+}
+async function identifySelection(){
+  if(!clipBuf){ showError('Load a clip first.'); return; }
   if(state.running) return;
   setBusy(true);
   $('#errBanner').classList.remove('show'); $('#results').innerHTML=''; state.lastResultMatch=null;
   showProgress(true);
-  const stages=[state.isolate?'Downloading + isolating music/SFX…':'Downloading clip…','Embedding voiceprint…','Searching reference voices…','Verifying across sub-windows…'];
-  const timers=stages.map((s,i)=>setTimeout(()=>pushStage(s), i*900));
-  const t0=Date.now(); const el=setInterval(()=>$('#progElapsed').textContent=fmtTime((Date.now()-t0)/1000)+' elapsed · download can take a bit',300);
   try{
-    const res=await call('/identify/url',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({url, isolate:state.isolate, show_id: state.showId? Number(state.showId): null})});
-    const data=await res.json();
-    timers.forEach(clearTimeout); clearInterval(el); finishStages(); showProgress(false); renderSingle(data.results||[]);
-  }catch(e){ timers.forEach(clearTimeout); clearInterval(el); showProgress(false); showError('Link identify failed — '+e.message); }
+    const fd=new FormData(); fd.append('audio', await renderSelectionWav(), 'clip.wav');
+    fd.append('isolate', String(state.isolate)); if(state.showId) fd.append('show_id', state.showId);
+    await runSingle(fd);                 // shared stage log + /identify + render
+  }catch(e){ showProgress(false); showError('Identify failed — '+e.message); }
   setBusy(false);
 }
-async function enrollUrl(){
-  const url=$('#urlInput').value.trim();
-  if(!url){ showError('Paste a link first.'); return; }
+async function enrollSelection(){
+  if(!clipBuf){ showError('Load a clip first.'); return; }
   const opt=$('#urlEnrollSelect').selectedOptions[0];
   if(!opt||!opt.value){ showError('Pick a character to add to.'); return; }
   if(state.running) return;
   const btn=$('#urlEnrollBtn'); const orig=btn.textContent; btn.textContent='Adding…'; setBusy(true);
   try{
-    const res=await call('/enroll/url',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({url, actor_id:Number(opt.value), voice_label:opt.dataset.label||opt.textContent, isolate:state.isolate})});
-    const d=await res.json();
+    const fd=new FormData(); fd.append('audio', await renderSelectionWav(), 'clip.wav');
+    fd.append('actor_id', opt.value); fd.append('voice_label', opt.dataset.label||opt.textContent); fd.append('isolate', String(state.isolate));
+    const res=await call('/enroll',{method:'POST',body:fd}); const d=await res.json();
     btn.textContent=`✓ Added — ${d.samples} clips`;
-  }catch(e){ btn.textContent=orig; showError('Link enroll failed — '+e.message); }
+  }catch(e){ btn.textContent=orig; showError('Enroll failed — '+e.message); }
   setBusy(false);
 }
 
@@ -669,8 +718,14 @@ $('#fileInput').onchange = e => { const f=e.target.files[0]; if(f) stageBlob(f, 
 $('#stagedClear').onclick = clearClip;
 $('#identifyBtn').onclick = identify;
 $('#enrollBtn').onclick = enrollStaged;
-$('#urlIdentifyBtn').onclick = identifyUrl;
-$('#urlEnrollBtn').onclick = enrollUrl;
+$('#urlLoadBtn').onclick = loadClip;
+$('#urlIdentifyBtn').onclick = identifySelection;
+$('#urlEnrollBtn').onclick = enrollSelection;
+$('#trimStart').oninput = updateSel;
+$('#trimEnd').oninput = updateSel;
+$('#startNow').onclick = () => { $('#trimStart').value = $('#clipAudio').currentTime; updateSel(); };
+$('#endNow').onclick = () => { $('#trimEnd').value = $('#clipAudio').currentTime; updateSel(); };
+$('#playSel').onclick = playSelection;
 $('#mode').onclick = e => { const b=e.target.closest('button'); if(!b)return; $$('#mode button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); state.mode=b.dataset.mode; };
 $('#isolate').onclick = function(){ state.isolate=!state.isolate; this.classList.toggle('on',state.isolate); this.setAttribute('aria-pressed',state.isolate); };
 $('#showFilter').onchange = e => state.showId = e.target.value;

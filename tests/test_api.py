@@ -224,6 +224,28 @@ def test_enroll_url_adds_clip_and_stores_audio(api_client, random_embedding, mon
     assert api_client.get(f"/embeddings/{url_emb['id']}/audio").status_code == 200
 
 
+def test_fetch_url_returns_audio_bytes(api_client, monkeypatch, tmp_path):
+    import ytclip
+    clip = tmp_path / "clip.mp3"; clip.write_bytes(make_wav_bytes())
+    monkeypatch.setattr(ytclip, "download_clip", lambda url, out, max_seconds=240: str(clip))
+
+    resp = api_client.post("/fetch/url", json={"url": "https://youtu.be/x"})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("audio/")
+    assert len(resp.content) > 0
+
+
+def test_fetch_url_download_failure_is_400(api_client, monkeypatch):
+    import ytclip
+
+    def boom(*a, **k):
+        raise ytclip.DownloadError("nope")
+    monkeypatch.setattr(ytclip, "download_clip", boom)
+
+    resp = api_client.post("/fetch/url", json={"url": "bad"})
+    assert resp.status_code == 400
+
+
 def test_character_404(api_client):
     assert api_client.get("/characters/999999").status_code == 404
     assert api_client.patch("/characters/999999", json={"occupation": "x"}).status_code == 404
