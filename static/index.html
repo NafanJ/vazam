@@ -329,14 +329,6 @@
       </div>
     </details>
 
-    <!-- BACKEND -->
-    <details id="backendWrap">
-      <summary>Backend URL <span>⌄</span></summary>
-      <div class="body">
-        <div class="field"><label>Same-origin by default</label><input type="text" id="backendUrl" placeholder="/ (leave blank for same origin)"></div>
-      </div>
-    </details>
-
     <!-- PROGRESS -->
     <div class="progress" id="progress">
       <div class="prog-head">
@@ -380,7 +372,7 @@ const state = {
   lastResultMatch:null,
   history: load('vazam_history', []),
 };
-const api = () => ($('#backendUrl').value || '').replace(/\/$/,'');
+const api = () => '';   // same-origin — the FastAPI app serves this page and the API
 
 function load(k,f){ try{ return JSON.parse(localStorage.getItem(k)) ?? f }catch(e){ return f } }
 function save(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)) }catch(e){} }
@@ -741,8 +733,6 @@ $('#playSel').onclick = playSelection;
 $('#mode').onclick = e => { const b=e.target.closest('button'); if(!b)return; $$('#mode button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); state.mode=b.dataset.mode; };
 $('#isolate').onclick = function(){ state.isolate=!state.isolate; this.classList.toggle('on',state.isolate); this.setAttribute('aria-pressed',state.isolate); };
 $('#showFilter').onchange = e => state.showId = e.target.value;
-$('#backendUrl').value = load('vazam_backend','') || '';
-$('#backendUrl').onchange = e => save('vazam_backend', e.target.value);
 
 let charMap={};   // datalist value string → {character_id, actor_id, voice_label}
 async function loadCharacters(){
