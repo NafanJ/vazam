@@ -498,27 +498,19 @@ async function identify(){
 async function runSingle(fd){
   // Plain POST (not the NDJSON stream): a single short-lived request survives
   // the Cloudflare tunnel / mobile network handoffs that drop a long-held
-  // streaming connection. Progress stages are simulated client-side while it runs.
-  const t0=Date.now(); const el=setInterval(()=>$('#progElapsed').textContent=fmtTime((Date.now()-t0)/1000)+' elapsed · usually 8–45s',200);
-  const stages=[state.isolate?'Isolating music & SFX (Demucs)…':null,'Trimming silence (VAD)…','Embedding voiceprint…','Searching reference voices…','Verifying across sub-windows…'].filter(Boolean);
-  const timers=stages.map((s,i)=>setTimeout(()=>pushStage(s), i*600));
-  try{
-    const res=await call('/identify', {method:'POST', body:fd});
-    const data=await res.json();
-    timers.forEach(clearTimeout); clearInterval(el);
-    finishStages(); showProgress(false); renderSingle(data.results||[]);
-  }catch(e){
-    timers.forEach(clearTimeout); clearInterval(el);
-    throw e;   // identify() handles showProgress(false) + error banner
-  }
+  // streaming connection. Progress stages are simulated client-side while it runs;
+  // showProgress() owns the elapsed timer, so an error here can't leak it.
+  scheduleStages([state.isolate?'Isolating music & SFX (Demucs)…':null,'Trimming silence (VAD)…','Embedding voiceprint…','Searching reference voices…','Verifying across sub-windows…'].filter(Boolean), 600);
+  const res=await call('/identify', {method:'POST', body:fd});
+  const data=await res.json();
+  finishStages(); showProgress(false); renderSingle(data.results||[]);
 }
 
 async function runScene(fd){
-  const t0=Date.now(); const el=setInterval(()=>$('#progElapsed').textContent=fmtTime((Date.now()-t0)/1000)+' elapsed · usually 8–45s',200);
-  ['Diarizing speakers…','Isolating music & SFX (Demucs)…','Embedding voiceprints…','Searching reference voices…','Inferring show…'].forEach((s,i)=>setTimeout(()=>pushStage(s), i*500));
-  let res = await call('/identify/show', {method:'POST', body:fd});
-  const data = await res.json();
-  clearInterval(el); finishStages(); showProgress(false); renderScene(data);
+  scheduleStages(['Diarizing speakers…','Isolating music & SFX (Demucs)…','Embedding voiceprints…','Searching reference voices…','Inferring show…'], 500);
+  const res=await call('/identify/show', {method:'POST', body:fd});
+  const data=await res.json();
+  finishStages(); showProgress(false); renderScene(data);
 }
 
 /* ═══════════════ RENDER ═══════════════ */
@@ -700,7 +692,23 @@ async function enrollSelection(){
 
 /* ─── progress helpers ─── */
 const stageEls=[];
-function showProgress(on){ $('#progress').classList.toggle('show',on); if(on){ $('#log').innerHTML=''; stageEls.length=0; $('#pbarFill').style.width='8%'; } }
+let _elapsedTimer=null;          // single owner of the elapsed counter
+let _stageTimers=[];             // simulated-stage setTimeouts
+function showProgress(on){
+  $('#progress').classList.toggle('show',on);
+  // Always tear down prior timers first, so a request that errors out (e.g. a
+  // dropped mobile connection) can never leave an elapsed counter running and
+  // fighting the next request's readout.
+  if(_elapsedTimer){ clearInterval(_elapsedTimer); _elapsedTimer=null; }
+  _stageTimers.forEach(clearTimeout); _stageTimers=[];
+  if(on){
+    $('#log').innerHTML=''; stageEls.length=0; $('#pbarFill').style.width='8%';
+    const t0=Date.now();
+    $('#progElapsed').textContent='0:00 elapsed · usually 8–45s';
+    _elapsedTimer=setInterval(()=>{ $('#progElapsed').textContent=fmtTime((Date.now()-t0)/1000)+' elapsed · usually 8–45s'; },300);
+  }
+}
+function scheduleStages(stages, gap=600){ stages.forEach((s,i)=>_stageTimers.push(setTimeout(()=>pushStage(s), i*gap))); }
 function pushStage(text){
   stageEls.forEach(e=>e.classList.replace('active','done'));
   stageEls.forEach(e=>{ if(e.classList.contains('done')) e.querySelector('.ic').textContent='✓'; });
