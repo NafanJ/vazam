@@ -423,7 +423,8 @@ class VazamDB:
         """Find the top-k most similar voice actors via the match_embeddings RPC.
 
         Returns a list of dicts with keys:
-            actor_id, actor_name, voice_label, similarity
+            actor_id, actor_name, voice_label, similarity,
+            character_id, image_url, show_title
         """
         result = self._client.rpc(
             "match_embeddings",

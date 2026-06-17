@@ -127,6 +127,9 @@ class IdentificationResult:
     character_name: str
     confidence: float
     window_agreement: Optional[float] = None
+    character_id: Optional[int] = None
+    image_url: Optional[str] = None
+    show_title: Optional[str] = None
 
     @property
     def confident(self) -> bool:
@@ -144,6 +147,9 @@ class IdentificationResult:
             "actor_id":         self.actor_id,
             "actor_name":       self.actor_name,
             "character_name":   self.character_name,
+            "character_id":     self.character_id,
+            "image_url":        self.image_url,
+            "show_title":       self.show_title,
             "confidence":       round(self.confidence, 4),
             "window_agreement": None if self.window_agreement is None
                                 else round(self.window_agreement, 3),
@@ -522,6 +528,9 @@ class VazamPipeline:
                 actor_name=row["actor_name"],
                 character_name=row["voice_label"],
                 confidence=float(row["similarity"]),
+                character_id=row.get("character_id"),
+                image_url=row.get("image_url"),
+                show_title=row.get("show_title"),
             )
             for row in rows
         ]

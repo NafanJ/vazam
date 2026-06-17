@@ -185,6 +185,11 @@
   .enroll-cta{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--accent2);
     background:rgba(255,46,106,.08);border:1px solid rgba(255,46,106,.26);padding:13px 14px;border-radius:14px;width:100%;text-align:left}
   .enroll-cta.done{color:var(--good);background:rgba(43,213,118,.08);border-color:rgba(43,213,118,.3)}
+  /* incorrect cta — sits under "Correct?", routes the clip to the right character */
+  .incorrect-cta{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--muted);
+    background:var(--raise);border:1px solid var(--line);padding:13px 14px;border-radius:14px;width:100%;text-align:left;margin-top:-4px;transition:.15s}
+  .incorrect-cta:hover{border-color:var(--line2);color:var(--txt)}
+  .incorrect-cta.active{color:var(--maybe);border-color:rgba(255,176,32,.34);background:rgba(255,176,32,.07)}
 
   /* also considered */
   .considered .ttl{font-size:11.5px;letter-spacing:.05em;color:var(--muted2);margin-bottom:8px}
@@ -509,11 +514,13 @@ function renderSingle(results){
   const [top,...rest]=results; state.lastResultMatch=top;
   let html = `<div class="section-label">Top match</div>${matchCard(top,{top:true})}`;
   html += `<button class="enroll-cta" id="enrollTop">➕ Correct? Add this clip to ${esc(top.character_name)}'s fingerprint</button>`;
+  html += `<button class="incorrect-cta" id="incorrectTop">✗ Incorrect? Assign this clip to the right character</button>`;
   if(rest.length){
     html += `<div class="considered"><div class="ttl">ALSO CONSIDERED</div>${rest.slice(0,4).map(m=>`<div class="row"><div><b>${esc(m.character_name)}</b> <span>· ${esc(m.actor_name||'')}</span></div><span class="p">${Math.round((m.confidence||0)*100)}%</span></div>`).join('')}</div>`;
   }
   R.innerHTML=html;
   $('#enrollTop').onclick = ()=>enrollTopResult(top);
+  $('#incorrectTop').onclick = markIncorrect;
   addHistory(top); renderHistory();
 }
 function renderScene(data){
@@ -556,6 +563,14 @@ async function enrollTopResult(top){
     const d = await res.json();
     btn.classList.add('done'); btn.textContent=`✓ Added — ${d.samples} clips`;
   }catch(e){ btn.textContent='✕ '+e.message; }
+}
+/* Wrong match: open the enrollment picker so the staged clip can be routed to
+   the correct character's fingerprint (the symmetric counterpart to "Correct"). */
+function markIncorrect(){
+  const btn=$('#incorrectTop'); if(btn){ btn.classList.add('active'); btn.textContent='↓ Pick the correct character below, then Add clip'; }
+  const w=$('#enrollWrap'); w.open=true;
+  w.scrollIntoView({behavior:'smooth', block:'center'});
+  $('#enrollSelect').focus();
 }
 async function enrollStaged(){
   if(!state.clip) return; const sel=$('#enrollSelect'); const opt=sel.selectedOptions[0]; if(!opt||!opt.value) return;
