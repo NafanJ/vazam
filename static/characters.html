@@ -37,6 +37,8 @@
   .sw::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:.18s}
   .toggle.on .sw{background:var(--good)} .toggle.on .sw::after{left:16px}
   .shown{font-size:11.5px;color:var(--muted2)}
+  .fgroup{display:flex;align-items:center;gap:10px}
+  .sortsel{font-family:inherit;font-size:12.5px;color:var(--txt);background:var(--raise);border:1px solid var(--line);border-radius:10px;padding:7px 26px 7px 9px;appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' stroke='%239a9aa6' fill='none' stroke-width='1.5'/></svg>");background-repeat:no-repeat;background-position:right 9px center}
 
   .list{margin-top:14px;display:flex;flex-direction:column;gap:8px}
   .row{display:flex;gap:12px;align-items:center;padding:10px 12px;border-radius:14px;background:var(--raise);border:1px solid var(--line);transition:.12s;text-align:left;width:100%}
@@ -92,7 +94,13 @@
 
     <div class="search"><span class="ic">⌕</span><input id="q" placeholder="name, actor, show, occupation…" autocomplete="off"></div>
     <div class="filters">
-      <button class="toggle" id="voiceOnly" aria-pressed="false"><span class="sw"></span>Only with a voice</button>
+      <div class="fgroup">
+        <button class="toggle" id="voiceOnly" aria-pressed="false"><span class="sw"></span>Only with a voice</button>
+        <select class="sortsel" id="sortSel" aria-label="Sort">
+          <option value="voiced">Voiced first</option>
+          <option value="clips">Most clips</option>
+        </select>
+      </div>
       <span class="shown" id="shown"></span>
     </div>
 
@@ -112,7 +120,11 @@ const api=()=>{ try{return (JSON.parse(localStorage.getItem('vazam_backend'))||'
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const initial=n=>(n||'?').trim().charAt(0).toUpperCase()||'?';
 
-let ALL=[], voiceOnly=false, query='';
+let ALL=[], voiceOnly=false, query='', sortMode='voiced';
+const SORTS={
+  voiced:(a,b)=> (b.samples>0)-(a.samples>0) || String(a.name).localeCompare(b.name),
+  clips :(a,b)=> (b.samples||0)-(a.samples||0) || String(a.name).localeCompare(b.name),
+};
 
 async function call(path,opts){
   const r=await fetch(api()+path,opts); if(!r.ok) throw new Error(r.status); return r;
@@ -123,8 +135,6 @@ async function loadAll(){
   try{ r=await call('/characters'); }
   catch(e){ $('#count').textContent='Failed to load characters.'; $('#list').innerHTML=`<div class="empty">Could not reach the server (${esc(e.message)}).</div>`; return; }
   ALL = await r.json();
-  // voices first, then by name
-  ALL.sort((a,b)=> (b.samples>0)-(a.samples>0) || String(a.name).localeCompare(b.name));
   const withVoice = ALL.filter(c=>c.samples>0).length;
   $('#count').textContent = `${ALL.length} characters · ${withVoice} with a voice fingerprint`;
   render();
@@ -137,7 +147,7 @@ function match(c){
   return hay.includes(query);
 }
 function render(){
-  const filtered = ALL.filter(match);
+  const filtered = ALL.filter(match).sort(SORTS[sortMode] || SORTS.voiced);
   const slice = filtered.slice(0,CAP);
   $('#shown').textContent = filtered.length ? `${Math.min(filtered.length,CAP)} of ${filtered.length}` : '';
   if(!filtered.length){ $('#list').innerHTML=`<div class="empty">No characters match “${esc(query)}”.<br>Try a different name, actor, or show.</div>`; return; }
@@ -194,6 +204,7 @@ function closeDetail(){ $('#overlay').classList.remove('show'); }
 $('#list').onclick=e=>{ const r=e.target.closest('.row'); if(r) openDetail(r.dataset.id); };
 $('#q').oninput=e=>{ query=e.target.value.trim().toLowerCase(); render(); };
 $('#voiceOnly').onclick=function(){ voiceOnly=!voiceOnly; this.classList.toggle('on',voiceOnly); this.setAttribute('aria-pressed',voiceOnly); render(); };
+$('#sortSel').onchange=function(){ sortMode=this.value; render(); };
 $('#overlay').onclick=e=>{ if(e.target===$('#overlay')) closeDetail(); };
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDetail(); });
 
