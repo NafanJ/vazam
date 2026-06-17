@@ -1,477 +1,616 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-<title>Vazam — Voice Actor ID</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0e">
+<title>Vazam — who's that voice?</title>
 <style>
-  :root {
-    --bg: #0d1117; --panel: #161b22; --line: #30363d; --txt: #e6edf3;
-    --muted: #8b949e; --accent: #2f81f7; --good: #2ea043; --maybe: #d29922; --none: #6e7681;
+  /* ───────────────────────────────────────────────────────────
+     Vazam — Identify screen. Self-contained, no build, no CDN.
+     Drop into static/, served at GET /. Vanilla JS only.
+     To use a display font on an offline box, paste a base64
+     @font-face here and it'll flow into --display automatically.
+     ─────────────────────────────────────────────────────────── */
+  :root{
+    --bg:#0a0a0e; --surface:#101016; --surface2:#16131a; --raise:rgba(255,255,255,.04);
+    --line:rgba(255,255,255,.08); --line2:rgba(255,255,255,.14);
+    --txt:#e9e9ee; --muted:#9a9aa6; --muted2:#6b6b78;
+    --accent:#811aff; --accent2:#ff2e6a; --accent-soft:rgba(129,26,255,.14);
+    --good:#2bd576; --maybe:#ffb020; --none:#6b6b78;
+    --rec:#ff3b54;
+    --display:'Space Grotesk', system-ui, -apple-system, Segoe UI, sans-serif;
+    --body:system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    --mono:ui-monospace, SFMono-Regular, Menlo, monospace;
   }
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  body {
-    margin: 0; background: var(--bg); color: var(--txt);
-    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    padding: 16px; max-width: 640px; margin: 0 auto;
-  }
-  h1 { font-size: 22px; margin: 8px 0 2px; }
-  h1 span { color: var(--accent); }
-  .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
-  label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px; }
-  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-  .seg { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-  .seg button { flex: 1; background: transparent; color: var(--txt); border: 0; padding: 10px 14px; font-size: 14px; cursor: pointer; }
-  .seg button.on { background: var(--accent); color: #fff; }
-  .toggle { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--txt); }
-  button.big {
-    width: 100%; padding: 18px; font-size: 17px; font-weight: 600; border: 0; border-radius: 12px;
-    background: var(--accent); color: #fff; cursor: pointer; margin-top: 6px;
-  }
-  button.big:disabled { opacity: .5; cursor: default; }
-  button.rec { background: #da3633; }
-  button.rec.recording { background: #b62324; animation: pulse 1.2s infinite; }
-  @keyframes pulse { 50% { opacity: .65; } }
-  .or { text-align: center; color: var(--muted); font-size: 12px; margin: 12px 0; }
-  input[type=file] { width: 100%; color: var(--muted); font-size: 13px; }
-  input[type=text] { width: 100%; background: var(--bg); border: 1px solid var(--line); color: var(--txt); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
-  .timer { font-variant-numeric: tabular-nums; font-size: 14px; color: var(--muted); margin-left: auto; }
-  .result { border: 1px solid var(--line); border-left-width: 4px; border-radius: 10px; padding: 14px; margin-bottom: 10px; background: var(--panel); }
-  .result.confident { border-left-color: var(--good); }
-  .result.possible  { border-left-color: var(--maybe); }
-  .result.none      { border-left-color: var(--none); }
-  .char { font-size: 20px; font-weight: 700; }
-  .actor { color: var(--muted); font-size: 14px; }
-  .actor b { color: var(--txt); font-weight: 600; }
-  .meta { display: flex; gap: 10px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
-  .badge { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 20px; font-weight: 700; }
-  .badge.confident { background: rgba(46,160,67,.18); color: #4ac26b; }
-  .badge.possible  { background: rgba(210,153,34,.18); color: #e3b341; }
-  .badge.none      { background: rgba(110,118,129,.18); color: var(--muted); }
-  .bar { flex: 1; height: 6px; min-width: 80px; background: var(--bg); border-radius: 4px; overflow: hidden; }
-  .bar > div { height: 100%; background: var(--accent); }
-  .conf { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); }
-  .spk { font-size: 12px; color: var(--accent); margin: 14px 0 6px; font-weight: 600; }
-  .showline { font-size: 14px; margin-bottom: 10px; padding: 10px 12px; background: rgba(47,129,247,.12); border-radius: 8px; }
-  .alts { margin-top: 6px; font-size: 12px; color: var(--muted); }
-  .enrollchip { margin-top: 8px; width: 100%; background: transparent; color: var(--good); border: 1px solid var(--good); border-radius: 8px; padding: 9px; font-size: 13px; font-weight: 600; cursor: pointer; }
-  .enrollchip:disabled { opacity: .7; cursor: default; }
-  .status { color: var(--muted); font-size: 14px; text-align: center; padding: 10px; }
-  .progress { margin: 6px 0 14px; display: none; }
-  .progress .lbl { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
-  .progress .lbl .t { font-variant-numeric: tabular-nums; }
-  .progress .track { height: 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
-  .progress .fill { height: 100%; width: 0%; background: var(--accent); border-radius: 5px; transition: width .25s ease; }
-  .progress .fill.done { background: var(--good); }
-  .log { margin-top: 10px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); max-height: 160px; overflow-y: auto; }
-  .log div { padding: 1px 0; }
-  .log div::before { content: "› "; color: var(--accent); }
-  .log div.ok::before { content: "✓ "; color: var(--good); }
-  .hist h2 { font-size: 14px; color: var(--muted); margin: 4px 0 10px; }
-  .hist .result { opacity: .85; }
-  .err { color: #f85149; font-size: 14px; }
-  details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--body)}
+  body{min-height:100dvh;-webkit-font-smoothing:antialiased;
+       background:radial-gradient(120% 55% at 50% -8%, #16131f, #0a0a0e 60%);}
+  .wrap{max-width:480px;margin:0 auto;padding:14px 18px 40px;display:flex;flex-direction:column;gap:16px}
+  button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  a{color:inherit}
+  ::selection{background:var(--accent-soft)}
+
+  /* header */
+  .top{display:flex;justify-content:space-between;align-items:center;padding-top:10px}
+  .brand{display:flex;align-items:center;gap:9px}
+  .brand .dot{width:11px;height:11px;border-radius:50%;background:linear-gradient(140deg,var(--accent),var(--accent2));box-shadow:0 0 14px -2px var(--accent)}
+  .brand b{font-family:var(--display);font-weight:700;font-size:20px;letter-spacing:-.01em}
+  .brand small{display:block;font-size:12px;color:var(--muted);font-weight:400;margin-top:1px}
+  .nav-link{font-size:13px;color:var(--txt);background:var(--raise);border:1px solid var(--line);padding:8px 12px;border-radius:11px}
+
+  /* segmented */
+  .seg{display:flex;gap:4px;background:var(--raise);border:1px solid var(--line);border-radius:14px;padding:4px}
+  .seg button{flex:1;text-align:center;font-size:13.5px;font-weight:600;padding:11px;border-radius:10px;color:var(--muted);transition:.15s}
+  .seg button.on{color:#fff;background:linear-gradient(140deg,rgba(129,26,255,.28),rgba(255,46,106,.2));border:1px solid rgba(129,26,255,.45)}
+
+  /* filters */
+  .filters{display:flex;gap:8px}
+  .sel{flex:1;position:relative}
+  .sel select{appearance:none;width:100%;font-family:inherit;font-size:13px;color:var(--txt);
+    background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:12px 30px 12px 13px}
+  .sel::after{content:'⌄';position:absolute;right:12px;top:9px;color:var(--muted2);pointer-events:none}
+  .toggle{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--txt);
+    background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:11px 13px;white-space:nowrap}
+  .sw{width:32px;height:18px;border-radius:9px;background:#3a3a44;position:relative;transition:.18s;flex:0 0 auto}
+  .sw::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:.18s}
+  .toggle.on .sw{background:var(--good)} .toggle.on .sw::after{left:16px}
+
+  /* hero */
+  .hero{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:22px 0 8px;position:relative}
+  .recwrap{position:relative;width:200px;height:200px;display:grid;place-items:center}
+  .ring{position:absolute;border-radius:50%;border:1px solid rgba(129,26,255,.16)}
+  .ring.r1{inset:0}.ring.r2{inset:26px}
+  .pulse{position:absolute;left:50%;top:50%;width:138px;height:138px;border-radius:50%;
+    transform:translate(-50%,-50%);background:radial-gradient(circle,rgba(129,26,255,.45),transparent 70%);
+    opacity:0;pointer-events:none}
+  .recbtn{width:138px;height:138px;border-radius:50%;background:linear-gradient(145deg,var(--accent),var(--accent2));
+    display:flex;align-items:center;justify-content:center;gap:3px;overflow:hidden;
+    box-shadow:0 20px 50px -12px rgba(129,40,255,.6), inset 0 2px 5px rgba(255,255,255,.32);
+    transition:transform .12s;animation:breathe 4s ease-in-out infinite}
+  .recbtn:active{transform:scale(.96)}
+  .recbtn svg{width:46px;height:46px}
+  .recbtn .bar{width:4px;height:54px;border-radius:3px;background:rgba(255,255,255,.94);transform-origin:center;display:none}
+  .hero-label{margin-top:22px;font-family:var(--display);font-size:17px;font-weight:600}
+  .hero-sub{margin-top:5px;font-size:12.5px;color:var(--muted)}
+  .timer{margin-top:6px;font-family:var(--display);font-size:44px;font-weight:700;font-variant-numeric:tabular-nums;display:none}
+  .rec-flag{display:none;align-items:center;gap:8px;margin-bottom:4px;color:#ffb3bf;font-size:12.5px;font-weight:600;letter-spacing:.04em}
+  .rec-flag .blink{width:8px;height:8px;border-radius:50%;background:var(--rec);animation:glow 1.1s infinite}
+
+  /* recording state */
+  body.recording .recbtn{animation:none;background:linear-gradient(145deg,var(--accent),var(--accent2))}
+  body.recording .recbtn svg{display:none}
+  body.recording .recbtn .bar{display:block;animation:bar 1s ease-in-out infinite}
+  /* stagger + vary each bar so it reads like a real soundwave */
+  body.recording .recbtn .bar:nth-child(2){height:30px;animation-duration:.62s;animation-delay:-.42s}
+  body.recording .recbtn .bar:nth-child(3){height:46px;animation-duration:.83s;animation-delay:-.15s}
+  body.recording .recbtn .bar:nth-child(4){height:60px;animation-duration:.54s;animation-delay:-.30s}
+  body.recording .recbtn .bar:nth-child(5){height:38px;animation-duration:.95s;animation-delay:-.05s}
+  body.recording .recbtn .bar:nth-child(6){height:60px;animation-duration:.70s;animation-delay:-.55s}
+  body.recording .recbtn .bar:nth-child(7){height:44px;animation-duration:.78s;animation-delay:-.22s}
+  body.recording .recbtn .bar:nth-child(8){height:32px;animation-duration:.6s;animation-delay:-.48s}
+  body.recording .pulse{animation:pulse 2.4s ease-out infinite}
+  body.recording .pulse.p2{animation-delay:1.2s}
+  body.recording .hero-label,body.recording .hero-sub{display:none}
+  body.recording .timer{display:block}
+  body.recording .rec-flag{display:flex}
+
+  /* or / upload */
+  .or{display:flex;align-items:center;gap:12px;color:var(--muted2);font-size:12px;margin:8px 0 0}
+  .or::before,.or::after{content:'';height:1px;flex:1;background:var(--line)}
+  .upload{margin:14px auto 0;font-size:12.5px;color:var(--txt);background:var(--raise);
+    border:1px dashed var(--line2);padding:11px 18px;border-radius:12px;display:inline-flex;gap:8px;align-items:center}
+  .upload input{display:none}
+
+  /* staged chip */
+  .staged{display:none;align-items:center;gap:10px;background:var(--accent-soft);border:1px solid rgba(129,26,255,.34);
+    border-radius:13px;padding:11px 13px;font-size:13px}
+  .staged.show{display:flex}
+  .staged .x{margin-left:auto;color:var(--muted);font-size:16px;cursor:pointer}
+  .staged .play{width:30px;height:30px;border-radius:50%;background:var(--accent);display:grid;place-items:center;flex:0 0 auto}
+
+  /* primary cta */
+  .cta{width:100%;font-family:var(--display);font-size:16px;font-weight:600;padding:16px;border-radius:16px;
+    background:var(--raise);border:1px solid var(--line);color:var(--muted2);transition:.15s}
+  .cta.ready{background:linear-gradient(140deg,var(--accent),var(--accent2));color:#fff;border-color:transparent;
+    box-shadow:0 14px 34px -12px rgba(129,40,255,.7)}
+  .cta:disabled{cursor:not-allowed}
+
+  /* collapsibles */
+  details{background:var(--raise);border:1px solid var(--line);border-radius:13px;padding:0 14px}
+  details summary{list-style:none;cursor:pointer;padding:13px 0;font-size:13px;color:var(--muted);display:flex;justify-content:space-between;align-items:center}
+  details summary::-webkit-details-marker{display:none}
+  details[open] summary{color:var(--txt)}
+  details .body{padding:2px 0 14px;display:flex;flex-direction:column;gap:10px}
+  .field{display:flex;flex-direction:column;gap:6px}
+  .field label{font-size:11px;letter-spacing:.05em;color:var(--muted2);text-transform:uppercase}
+  .field input,.field select{font-family:inherit;font-size:13px;color:var(--txt);background:var(--bg);
+    border:1px solid var(--line);border-radius:10px;padding:11px 12px;width:100%}
+  .mini-btn{font-size:13px;font-weight:600;color:#fff;background:linear-gradient(140deg,var(--accent),var(--accent2));
+    padding:11px 14px;border-radius:11px}
+  .mini-btn.ghost{background:var(--raise);border:1px solid var(--line);color:var(--txt)}
+
+  /* progress */
+  .progress{display:none;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:16px;flex-direction:column;gap:14px}
+  .progress.show{display:flex}
+  .prog-head{display:flex;align-items:center;gap:11px}
+  .spinner{width:30px;height:30px;border-radius:50%;border:2.5px solid rgba(129,26,255,.25);border-top-color:var(--accent);animation:spin .9s linear infinite;flex:0 0 auto}
+  .prog-head .stage{font-family:var(--display);font-weight:600;font-size:15.5px}
+  .prog-head .elapsed{font-size:12px;color:var(--muted)}
+  .pbar{height:8px;border-radius:5px;background:rgba(255,255,255,.06);overflow:hidden}
+  .pbar > i{display:block;height:100%;border-radius:5px;width:8%;transition:width .4s ease;
+    background:linear-gradient(90deg,var(--accent),var(--accent2),var(--accent));background-size:200% 100%;animation:shimmer 1.6s linear infinite}
+  .log{background:var(--bg);border:1px solid var(--line);border-radius:13px;padding:6px 14px;max-height:168px;overflow-y:auto}
+  .log .line{display:flex;gap:11px;align-items:center;padding:8px 0;font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+  .log .line .ic{width:15px;text-align:center}
+  .log .line.done{color:var(--good)} .log .line.active{color:var(--txt)}
+
+  /* results */
+  .results{display:flex;flex-direction:column;gap:14px}
+  .section-label{font-family:var(--display);font-size:12.5px;letter-spacing:.04em;color:var(--muted);margin:4px 0 -2px}
+
+  /* show banner (scene) */
+  .show-banner{border-radius:18px;padding:16px;background:linear-gradient(140deg,rgba(129,26,255,.2),rgba(255,46,106,.13));border:1px solid rgba(129,26,255,.34)}
+  .show-banner .k{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#d9c4ff}
+  .show-banner .t{font-family:var(--display);font-size:23px;font-weight:700;margin-top:4px}
+  .show-banner .m{font-size:12.5px;color:#cdb9ec;margin-top:2px}
+
+  /* TRADING CARD (top result) */
+  .card{border-radius:22px;overflow:hidden;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--lvl,var(--none))}
+  .card.confident{border-color:rgba(43,213,118,.3);box-shadow:0 0 36px -16px rgba(43,213,118,.5)}
+  .card.possible{border-color:rgba(255,176,32,.28);box-shadow:0 0 34px -18px rgba(255,176,32,.45)}
+  .card .art{position:relative;height:170px;overflow:hidden;background:linear-gradient(140deg,#241a33,#120e1a)}
+  .card .art img{width:100%;height:100%;object-fit:cover;display:block}
+  .card .art .mono{position:absolute;right:-8px;bottom:-26px;font-family:var(--display);font-size:175px;font-weight:700;color:rgba(255,255,255,.07);line-height:.8}
+  .card .art .scrim{position:absolute;left:0;right:0;bottom:0;height:78px;background:linear-gradient(transparent,var(--surface))}
+  .card .art .show-chip{position:absolute;top:12px;left:12px;font-size:11px;color:#e6e6ee;background:rgba(0,0,0,.42);backdrop-filter:blur(6px);padding:5px 10px;border-radius:9px}
+  .pill{position:absolute;top:12px;right:12px;display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;padding:6px 11px;border-radius:20px;color:#07140b}
+  .pill .pd{width:6px;height:6px;border-radius:50%;background:rgba(0,0,0,.55)}
+  .pill.confident{background:var(--good)} .pill.possible{background:var(--maybe);color:#1a1304} .pill.none{background:var(--none);color:#0a0a0a}
+  .card .meta{padding:6px 18px 18px}
+  .card .name{font-family:var(--display);font-size:27px;font-weight:700;letter-spacing:-.02em;margin-top:-4px}
+  .card .actor{font-size:14px;color:var(--muted);margin-top:2px}
+  .card .actor b{color:var(--txt);font-weight:600}
+  .conf-row{display:flex;justify-content:space-between;align-items:center;margin-top:15px}
+  .conf-row .lab{font-size:12.5px;color:var(--muted)}
+  .conf-row .pct{font-family:var(--display);font-size:20px;font-weight:700}
+  .confbar{margin-top:7px;height:8px;border-radius:5px;background:rgba(255,255,255,.07);overflow:hidden}
+  .confbar > i{display:block;height:100%}
+  .winrow{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11.5px;color:var(--muted2)}
+  .winrow .wb{flex:1;height:4px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden}
+  .winrow .wb > i{display:block;height:100%;background:#5a5a64}
+
+  /* enroll cta */
+  .enroll-cta{display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:var(--accent2);
+    background:rgba(255,46,106,.08);border:1px solid rgba(255,46,106,.26);padding:13px 14px;border-radius:14px;width:100%;text-align:left}
+  .enroll-cta.done{color:var(--good);background:rgba(43,213,118,.08);border-color:rgba(43,213,118,.3)}
+
+  /* also considered */
+  .considered .ttl{font-size:11.5px;letter-spacing:.05em;color:var(--muted2);margin-bottom:8px}
+  .considered .row{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-radius:11px;background:var(--raise);margin-bottom:6px}
+  .considered .row b{font-size:13.5px;font-weight:600} .considered .row span{font-size:12px;color:var(--muted)}
+  .considered .row .p{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+  /* compact row (speaker groups + history) */
+  .crow{display:flex;gap:13px;align-items:center;padding:12px;border-radius:16px;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--lvl,var(--none))}
+  .crow .av{width:58px;height:58px;border-radius:13px;overflow:hidden;background:linear-gradient(140deg,#241a33,#120e1a);display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:24px;color:rgba(255,255,255,.5);flex:0 0 auto}
+  .crow .av img{width:100%;height:100%;object-fit:cover}
+  .crow .info{flex:1;min-width:0}
+  .crow .info .nm{display:flex;align-items:center;gap:8px}
+  .crow .info .nm b{font-family:var(--display);font-size:16px;font-weight:700}
+  .crow .info .nm .badge{font-size:10px;font-weight:700;padding:3px 7px;border-radius:8px;color:#0a0a0a}
+  .crow .info .ac{font-size:12.5px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .crow .info .b{margin-top:8px;height:5px;border-radius:3px;background:rgba(255,255,255,.07);overflow:hidden}
+  .crow .info .b > i{display:block;height:100%}
+  .spk-label{font-size:12px;letter-spacing:.05em;color:var(--muted2);margin:4px 0 8px}
+
+  /* history */
+  .history{display:flex;flex-direction:column;gap:10px}
+
+  /* banners */
+  .banner{display:none;align-items:center;gap:10px;font-size:12.5px;border-radius:12px;padding:11px 13px}
+  .banner.show{display:flex}
+  .banner.err{background:rgba(255,59,84,.1);border:1px solid rgba(255,59,84,.32);color:#ffb3bf}
+  .banner.warn{background:rgba(255,176,32,.1);border:1px solid rgba(255,176,32,.3);color:#ffd98a}
+
+  /* empty */
+  .empty{text-align:center;color:var(--muted2);font-size:13px;padding:24px 0}
+
+  @keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.03)}}
+  @keyframes pulse{0%{transform:translate(-50%,-50%) scale(.5);opacity:.6}100%{transform:translate(-50%,-50%) scale(2.3);opacity:0}}
+  @keyframes bar{0%,100%{transform:scaleY(.18)}50%{transform:scaleY(1)}}
+  @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes glow{0%,100%{opacity:.5}50%{opacity:1}}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important}}
 </style>
 </head>
 <body>
-  <h1>Vaz<span>am</span> — who's that voice?</h1>
-  <div class="sub">Record or upload a clip. Returns the <b>character</b> and the <b>actor</b> who plays them. · <a href="/characters.html" style="color:var(--accent)">Characters →</a></div>
+  <div class="wrap">
 
-  <div class="panel">
-    <label>Mode</label>
-    <div class="seg" id="mode">
-      <button data-mode="identify" class="on">Single voice</button>
-      <button data-mode="show">Scene (who's in it)</button>
-    </div>
-    <div style="margin-top:14px">
-      <label>Show (optional — narrows the search to one cast, much more accurate)</label>
-      <select id="showSel" style="width:100%; background:var(--bg); border:1px solid var(--line); color:var(--txt); border-radius:8px; padding:9px 10px; font-size:14px">
-        <option value="">All shows (open search)</option>
-      </select>
-    </div>
-    <div class="row" style="margin-top:14px; justify-content:space-between">
-      <label class="toggle"><input type="checkbox" id="isolate" checked /> Strip music/SFX (recommended for TV)</label>
-    </div>
-
-    <div class="row" style="margin-top:16px">
-      <button class="big rec" id="recBtn">● Record</button>
-      <span class="timer" id="timer"></span>
-    </div>
-    <div class="or">— or —</div>
-    <label>Upload an audio file (m4a / mp3 / wav)</label>
-    <input type="file" id="fileInput" accept="audio/*" />
-    <button class="big" id="goBtn" disabled style="margin-top:12px">Identify</button>
-
-    <div style="margin-top:18px; border-top:1px solid var(--line); padding-top:14px">
-      <label>➕ Or add the staged clip to a character's fingerprint (improves accuracy)</label>
-      <div class="row">
-        <select id="voiceSel" style="flex:1; min-width:0; background:var(--bg); border:1px solid var(--line); color:var(--txt); border-radius:8px; padding:9px 10px; font-size:14px"></select>
-        <button class="big" id="enrollBtn" disabled style="width:auto; padding:11px 16px; margin-top:0">Add clip</button>
+    <!-- HEADER -->
+    <header class="top">
+      <div class="brand">
+        <span class="dot"></span>
+        <div><b>Vazam</b><small>who's that voice?</small></div>
       </div>
+      <a class="nav-link" href="characters.html">Characters</a>
+    </header>
+
+    <!-- MODE -->
+    <div class="seg" id="mode">
+      <button data-mode="single" class="on">Single voice</button>
+      <button data-mode="scene">Scene · who's in it</button>
     </div>
 
-    <details style="margin-top:14px">
-      <summary>Backend URL</summary>
-      <input type="text" id="apiBase" placeholder="(defaults to this page's origin)" style="margin-top:8px" />
-      <div class="sub" style="margin-top:6px">Set this if the dashboard is served from a different host than the API.</div>
+    <!-- FILTERS -->
+    <div class="filters">
+      <div class="sel">
+        <select id="showFilter"><option value="">All shows (open search)</option></select>
+      </div>
+      <button class="toggle on" id="isolate" aria-pressed="true"><span class="sw"></span>Strip SFX</button>
+    </div>
+
+    <!-- BANNERS -->
+    <div class="banner warn" id="micBanner">🎙 Mic unavailable — use file upload instead.</div>
+    <div class="banner err" id="errBanner"></div>
+
+    <!-- HERO -->
+    <div class="hero">
+      <div class="rec-flag"><span class="blink"></span>RECORDING</div>
+      <div class="recwrap">
+        <span class="ring r1"></span><span class="ring r2"></span>
+        <span class="pulse p1"></span><span class="pulse p2"></span>
+        <button class="recbtn" id="recBtn" aria-label="Record">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Z" fill="#fff"/><path d="M6 11a6 6 0 0 0 12 0M12 17v3" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span>
+        </button>
+      </div>
+      <div class="timer" id="timer">0:00</div>
+      <div class="hero-label">Tap to record</div>
+      <div class="hero-sub">point at the screen · a few seconds is enough</div>
+      <div class="or">or</div>
+      <label class="upload">⬆ Upload m4a / mp3 / wav<input type="file" id="fileInput" accept="audio/*,.m4a,.mp3,.wav"></label>
+    </div>
+
+    <!-- STAGED -->
+    <div class="staged" id="staged">
+      <span class="play">▶</span>
+      <span id="stagedLabel">Ready — tap Identify.</span>
+      <span class="x" id="stagedClear">✕</span>
+    </div>
+
+    <!-- CTA -->
+    <button class="cta" id="identifyBtn" disabled>Identify</button>
+
+    <!-- ENROLLMENT -->
+    <details id="enrollWrap">
+      <summary>➕ Add staged clip to a character's fingerprint <span>⌄</span></summary>
+      <div class="body">
+        <div class="field"><label>Character</label><select id="enrollSelect"><option value="">Loading voices…</option></select></div>
+        <button class="mini-btn" id="enrollBtn" disabled>Add clip</button>
+      </div>
     </details>
-  </div>
 
-  <div class="progress" id="progress">
-    <div class="lbl"><span id="progStage">Analyzing…</span><span class="t" id="progTime">0.0s</span></div>
-    <div class="track"><div class="fill" id="progFill"></div></div>
-    <div class="log" id="log"></div>
-  </div>
-  <div id="status"></div>
-  <div id="results"></div>
+    <!-- BACKEND -->
+    <details id="backendWrap">
+      <summary>Backend URL <span>⌄</span></summary>
+      <div class="body">
+        <div class="field"><label>Same-origin by default</label><input type="text" id="backendUrl" placeholder="/ (leave blank for same origin)"></div>
+      </div>
+    </details>
 
-  <div class="hist panel" id="histPanel" style="display:none">
-    <h2>Previous recordings</h2>
-    <div id="history"></div>
+    <!-- PROGRESS -->
+    <div class="progress" id="progress">
+      <div class="prog-head">
+        <span class="spinner"></span>
+        <div><div class="stage" id="progStage">Starting…</div><div class="elapsed" id="progElapsed">0:00 elapsed · usually 8–45s</div></div>
+      </div>
+      <div class="pbar"><i id="pbarFill"></i></div>
+      <div class="log" id="log"></div>
+    </div>
+
+    <!-- RESULTS -->
+    <div class="results" id="results"></div>
+
+    <!-- HISTORY -->
+    <div id="historyWrap"></div>
+
   </div>
 
 <script>
-const $ = (s) => document.querySelector(s);
-let mode = "identify";
-let pending = null;       // { blob, name } awaiting Identify
-let lastWav = null;       // last converted WAV, reused for one-click enroll
-let mediaRecorder = null, chunks = [], recStart = 0, timerInt = null;
+"use strict";
+/* ───────────── Vazam Identify — vanilla controller ─────────────
+   Endpoints (same-origin, Basic auth handled by browser):
+     POST /identify/stream   POST /identify/show   POST /enroll
+     GET  /voices  GET /shows */
 
-// ── Mode toggle ──────────────────────────────────────────────────────────────
-$("#mode").addEventListener("click", (e) => {
-  const b = e.target.closest("button"); if (!b) return;
-  mode = b.dataset.mode;
-  [...$("#mode").children].forEach((c) => c.classList.toggle("on", c === b));
-});
+const $  = (s,r=document)=>r.querySelector(s);
+const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
+const fmtTime = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
 
-// ── Recording ────────────────────────────────────────────────────────────────
-$("#recBtn").addEventListener("click", async () => {
-  if (mediaRecorder && mediaRecorder.state === "recording") { mediaRecorder.stop(); return; }
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    setStatus("Mic recording needs HTTPS or localhost. Use file upload instead.", true); return;
+const LVL = {
+  confident:{cls:'confident',color:'var(--good)',pill:'CONFIDENT',hex:'#2bd576'},
+  possible :{cls:'possible', color:'var(--maybe)',pill:'POSSIBLE', hex:'#ffb020'},
+  none     :{cls:'none',     color:'var(--none)', pill:'NO MATCH', hex:'#6b6b78'},
+};
+const initial = n => (n||'?').trim().charAt(0).toUpperCase() || '?';
+
+const state = {
+  mode:'single', isolate:true, showId:'',
+  clip:null,        // {blob, name}
+  lastResultMatch:null,
+  history: load('vazam_history', []),
+};
+const api = () => ($('#backendUrl').value || '').replace(/\/$/,'');
+
+function load(k,f){ try{ return JSON.parse(localStorage.getItem(k)) ?? f }catch(e){ return f } }
+function save(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)) }catch(e){} }
+
+/* ─── fetch helper ─── */
+async function call(path, opts){
+  const r = await fetch(api()+path, opts);
+  if(!r.ok){ const t = await r.text().catch(()=> ''); throw new Error(`${r.status} ${t.slice(0,140)}`); }
+  return r;
+}
+
+/* ═══════════════ MEDIA / RECORDING ═══════════════ */
+let mediaRecorder, chunks=[], recStart=0, recTimer=null, recStream=null;
+
+async function toggleRecord(){
+  if(mediaRecorder && mediaRecorder.state==='recording'){ stopRecord(); return; }
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ $('#micBanner').classList.add('show'); return; }
+  try{
+    recStream = await navigator.mediaDevices.getUserMedia({audio:true});
+  }catch(e){
+    $('#micBanner').classList.add('show');
+    $('#micBanner').textContent = '🎙 Mic denied or needs HTTPS — use file upload instead.';
+    return;
   }
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    chunks = [];
-    mediaRecorder = new MediaRecorder(stream);
-    mediaRecorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-    mediaRecorder.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop());
-      const blob = new Blob(chunks, { type: chunks[0]?.type || "audio/webm" });
-      stagePending(blob, "recording");
-      $("#recBtn").classList.remove("recording");
-      $("#recBtn").textContent = "● Record";
-      clearInterval(timerInt); $("#timer").textContent = "";
-    };
-    mediaRecorder.start();
-    recStart = Date.now();
-    $("#recBtn").classList.add("recording");
-    $("#recBtn").textContent = "■ Stop";
-    timerInt = setInterval(() => {
-      const s = (Date.now() - recStart) / 1000;
-      $("#timer").textContent = s.toFixed(1) + "s";
-    }, 100);
-  } catch (err) { setStatus("Mic access denied: " + err.message, true); }
-});
-
-$("#fileInput").addEventListener("change", (e) => {
-  const f = e.target.files[0];
-  if (f) stagePending(f, f.name);
-});
-
-function stagePending(blob, name) {
-  pending = { blob, name };
-  $("#goBtn").disabled = false;
-  $("#enrollBtn").disabled = false;
-  setStatus("Ready: " + name + " — tap Identify or add to a fingerprint.");
+  $('#micBanner').classList.remove('show');
+  chunks=[]; mediaRecorder = new MediaRecorder(recStream);
+  mediaRecorder.ondataavailable = e => e.data.size && chunks.push(e.data);
+  mediaRecorder.onstop = onRecStop;
+  mediaRecorder.start();
+  recStart = Date.now(); document.body.classList.add('recording');
+  recTimer = setInterval(()=>{
+    const s=(Date.now()-recStart)/1000; $('#timer').textContent=fmtTime(s);
+    if(s>=20) stopRecord();      // hard 20s cap
+  },100);
+}
+function stopRecord(){ if(mediaRecorder && mediaRecorder.state==='recording') mediaRecorder.stop(); }
+async function onRecStop(){
+  clearInterval(recTimer); document.body.classList.remove('recording'); $('#timer').textContent='0:00';
+  recStream && recStream.getTracks().forEach(t=>t.stop());
+  const raw = new Blob(chunks, {type: chunks[0]?.type || 'audio/webm'});
+  await stageBlob(raw, 'Recording');
 }
 
-// ── Submit ───────────────────────────────────────────────────────────────────
-$("#goBtn").addEventListener("click", async () => {
-  if (!pending) return;
-  $("#goBtn").disabled = true;
-  setStatus("Converting audio…");
-  let wav;
-  try {
-    wav = await blobToWav16k(pending.blob);
-    lastWav = wav;
-  } catch (err) { setStatus("Could not decode that audio: " + err.message, true); $("#goBtn").disabled = false; return; }
-
-  const isolate = $("#isolate").checked;
-  const showId = $("#showSel").value;
-  const fd = new FormData();
-  fd.append("audio", wav, "clip.wav");
-  fd.append("isolate", isolate ? "true" : "false");
-  if (showId) fd.append("show_id", showId);
-
-  clearLog();
-  if (window._trimmed) logLine("Long clip — using first 20s (plenty to identify)", false);
-  setStatus("");
-  const t0 = performance.now();
-  startProgress(isolate ? 45 : 8, "Starting…");
-  try {
-    let data;
-    if (mode === "show") {
-      logStage("Diarizing + inferring show…");
-      const res = await fetch(apiUrl("/identify/show"), { method: "POST", body: fd });
-      if (!res.ok) throw new Error("server " + res.status + ": " + (await res.text()).slice(0, 160));
-      data = await res.json();
-      logLine("Done", true);
-    } else {
-      data = await runStream(apiUrl("/identify/stream"), fd);   // live progress log
-    }
-    const secs = ((performance.now() - t0) / 1000).toFixed(1);
-    stopProgress(true);
-    render(data, pending.name, secs);
-    setStatus("");
-  } catch (err) {
-    stopProgress(false);
-    setStatus("Failed: " + err.message, true);
-  }
-  $("#goBtn").disabled = false;
-});
-
-// ── Rendering ────────────────────────────────────────────────────────────────
-function matchCard(m) {
-  const lvl = m.match_level || "none";
-  const pct = Math.round((m.confidence || 0) * 100);
-  const win = m.window_agreement != null ? ` · win ${Math.round(m.window_agreement * 100)}%` : "";
-  const el = document.createElement("div");
-  el.className = "result " + lvl;
-  el.innerHTML =
-    `<div class="char">${esc(m.character_name) || "—"}</div>` +
-    `<div class="actor">voiced by <b>${esc(m.actor_name)}</b></div>` +
-    `<div class="meta">` +
-      `<span class="badge ${lvl}">${lvl}</span>` +
-      `<div class="bar"><div style="width:${pct}%"></div></div>` +
-      `<span class="conf">${pct}%${win}</span>` +
-    `</div>`;
-  return el;
-}
-
-function render(data, name, secs) {
-  const wrap = document.createElement("div");
-  const head = document.createElement("div");
-  head.className = "sub";
-  head.style.margin = "2px 0 8px";
-  head.textContent = `“${name}” · ${secs}s`;
-  wrap.appendChild(head);
-
-  if (data.results) {                         // /identify
-    const list = data.results;
-    if (!list.length) wrap.appendChild(noMatch());
-    else {
-      wrap.appendChild(matchCard(list[0]));
-      wrap.appendChild(enrollButton(list[0]));
-      if (list.length > 1) wrap.appendChild(altList(list.slice(1)));
-    }
-  } else if (data.speakers) {                  // /identify/show
-    if (data.show) {
-      const s = document.createElement("div");
-      s.className = "showline";
-      s.innerHTML = `🎬 Likely show: <b>${esc(data.show.title)}</b> ` +
-        `<span class="conf">(${data.show.speakers_matched}/${data.show.speakers_total} speakers)</span>`;
-      wrap.appendChild(s);
-    }
-    const speakers = Object.keys(data.speakers).sort();
-    if (!speakers.length) wrap.appendChild(noMatch());
-    speakers.forEach((spk, i) => {
-      const lab = document.createElement("div");
-      lab.className = "spk"; lab.textContent = "Speaker " + (i + 1);
-      wrap.appendChild(lab);
-      const list = data.speakers[spk];
-      if (!list.length) wrap.appendChild(noMatch());
-      else { wrap.appendChild(matchCard(list[0])); if (list.length > 1) wrap.appendChild(altList(list.slice(1))); }
-    });
-  }
-  $("#results").prepend(wrap);
-  archive(wrap.cloneNode(true));
-}
-
-function altList(rest) {
-  const d = document.createElement("div");
-  d.className = "alts";
-  d.innerHTML = "also considered: " + rest.map((m) =>
-    `${esc(m.character_name)} (${esc(m.actor_name)}, ${Math.round(m.confidence * 100)}%)`).join(" · ");
-  return d;
-}
-function noMatch() { const d = document.createElement("div"); d.className = "result none"; d.innerHTML = `<div class="char">No match</div><div class="actor">no voice cleared the threshold</div>`; return d; }
-function archive(node) {
-  node.querySelectorAll(".enrollchip").forEach((b) => b.remove());  // inert in history
-  $("#histPanel").style.display = "block";
-  const h = $("#history");
-  h.prepend(node);
-  while (h.children.length > 8) h.removeChild(h.lastChild);
-}
-function enrollButton(m) {
-  const b = document.createElement("button");
-  b.className = "enrollchip";
-  b.textContent = "➕ Correct? Add this clip to " + (m.character_name || m.actor_name) + "'s fingerprint";
-  b.onclick = () => enroll(lastWav, m.actor_id, m.character_name, b);
-  return b;
-}
-
-function setStatus(msg, isErr) {
-  const s = $("#status");
-  s.className = isErr ? "status err" : "status";
-  s.textContent = msg || "";
-}
-
-// ── Streamed progress (NDJSON from /identify/stream) ──────────────────────────
-async function runStream(url, fd) {
-  const res = await fetch(url, { method: "POST", body: fd });
-  if (!res.ok) throw new Error("server " + res.status + ": " + (await res.text()).slice(0, 160));
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let buf = "", result = null;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let nl;
-    while ((nl = buf.indexOf("\n")) >= 0) {
-      const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
-      if (!line) continue;
-      let ev; try { ev = JSON.parse(line); } catch (e) { continue; }
-      if (ev.error) throw new Error(ev.error);
-      else if (ev.done) { result = { results: ev.results }; logLine("Done", true); }
-      else if (ev.stage) { logStage(ev.stage); setStage(ev.stage); }
-    }
-  }
-  if (!result) throw new Error("stream ended without a result");
-  return result;
-}
-
-// ── Progress bar + log ────────────────────────────────────────────────────────
-let progTimer = null, progT0 = 0;
-function startProgress(estSecs, stage) {
-  const p = $("#progress"); p.style.display = "block";
-  const fill = $("#progFill"); fill.classList.remove("done"); fill.style.width = "0%";
-  setStage(stage);
-  progT0 = performance.now();
-  progTimer = setInterval(() => {
-    const el = (performance.now() - progT0) / 1000;
-    $("#progTime").textContent = el.toFixed(1) + "s";
-    fill.style.width = (92 * (1 - Math.exp(-el / (estSecs * 0.6)))).toFixed(1) + "%";
-  }, 120);
-}
-function stopProgress(ok) {
-  if (progTimer) { clearInterval(progTimer); progTimer = null; }
-  const fill = $("#progFill");
-  if (ok) { fill.classList.add("done"); fill.style.width = "100%"; }
-  setTimeout(() => { $("#progress").style.display = "none"; fill.style.width = "0%"; fill.classList.remove("done"); }, ok ? 600 : 0);
-}
-function setStage(t) { $("#progStage").textContent = t; }
-function clearLog() { $("#log").innerHTML = ""; }
-function logStage(t) { logLine(t, false); }
-function logLine(t, ok) {
-  const d = document.createElement("div");
-  if (ok) d.className = "ok";
-  d.textContent = t;
-  $("#log").appendChild(d);
-  $("#log").scrollTop = $("#log").scrollHeight;
-}
-
-// ── Enrollment: add a clip to a character's fingerprint ──────────────────────
-let voicesList = [];
-async function loadVoices() {
-  try {
-    const res = await fetch(apiUrl("/voices"));
-    if (!res.ok) return;
-    voicesList = await res.json();
-    const sel = $("#voiceSel"); sel.innerHTML = "";
-    if (!voicesList.length) { const o = document.createElement("option"); o.textContent = "(no voices yet)"; sel.appendChild(o); return; }
-    voicesList.forEach((v, i) => {
-      const o = document.createElement("option");
-      o.value = i;
-      o.textContent = v.voice_label + " — " + v.actor_name + " (" + v.samples + " clip" + (v.samples === 1 ? "" : "s") + ")";
-      sel.appendChild(o);
-    });
-  } catch (e) { /* ignore */ }
-}
-async function enroll(wav, actorId, voiceLabel, btn) {
-  if (!wav) { setStatus("Record or upload a clip first.", true); return; }
-  const orig = btn ? btn.textContent : "";
-  if (btn) { btn.disabled = true; btn.textContent = "Adding…"; }
-  const fd = new FormData();
-  fd.append("audio", wav, "enroll.wav");
-  fd.append("actor_id", actorId);
-  fd.append("voice_label", voiceLabel);
-  fd.append("isolate", $("#isolate").checked ? "true" : "false");
-  try {
-    const res = await fetch(apiUrl("/enroll"), { method: "POST", body: fd });
-    if (!res.ok) throw new Error("server " + res.status + ": " + (await res.text()).slice(0, 120));
-    const d = await res.json();
-    if (btn) btn.textContent = "✓ Added — " + d.samples + " clips";
-    setStatus("Added to " + d.voice_label + " (" + d.actor_name + ") — now " + d.samples + " reference clip(s).");
-    loadVoices();
-  } catch (e) {
-    if (btn) { btn.disabled = false; btn.textContent = orig || "➕ retry"; }
-    setStatus("Enroll failed: " + e.message, true);
-  }
-}
-$("#enrollBtn").addEventListener("click", async () => {
-  if (!pending) { setStatus("Record or upload a clip first.", true); return; }
-  const v = voicesList[Number($("#voiceSel").value)];
-  if (!v) { setStatus("Pick a character to add to.", true); return; }
-  setStatus("Converting…");
-  let wav;
-  try { wav = await blobToWav16k(pending.blob); } catch (e) { setStatus("Decode failed: " + e.message, true); return; }
-  await enroll(wav, v.actor_id, v.voice_label, $("#enrollBtn"));
-});
-loadVoices();
-
-// ── Populate show filter ──────────────────────────────────────────────────────
-(async function loadShows() {
-  try {
-    const res = await fetch(apiUrl("/shows"));
-    if (!res.ok) return;
-    const shows = await res.json();
-    const sel = $("#showSel");
-    shows.forEach((s) => {
-      const o = document.createElement("option");
-      o.value = s.id; o.textContent = s.title;
-      sel.appendChild(o);
-    });
-  } catch (e) { /* leave "All shows" only */ }
-})();
-function esc(s) { return (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
-function apiUrl(ep) { const b = $("#apiBase").value.trim().replace(/\/$/, ""); return (b || "") + ep; }
-
-// ── Audio: decode anything → 16 kHz mono 16-bit WAV ──────────────────────────
-async function blobToWav16k(blob) {
+/* ═══════════════ WAV 16k mono 16-bit (existing pipeline) ═══════════════ */
+async function blobToWav16k(blob){
   const arrayBuf = await blob.arrayBuffer();
   const AC = window.AudioContext || window.webkitAudioContext;
-  const decoded = await new AC().decodeAudioData(arrayBuf.slice(0));
-  const targetRate = 16000;
-  const MAX_SECONDS = 20;                      // a few seconds is plenty to ID a voice
-  window._trimmed = decoded.duration > MAX_SECONDS;
-  const dur = Math.min(decoded.duration, MAX_SECONDS);
-  const frames = Math.ceil(dur * targetRate);
-  const off = new OfflineAudioContext(1, frames, targetRate);
-  const src = off.createBufferSource();
-  src.buffer = decoded;
-  src.connect(off.destination);
-  src.start();
-  const rendered = await off.startRendering();
-  return encodeWav(rendered.getChannelData(0), targetRate);
+  const tmp = new AC();
+  const decoded = await tmp.decodeAudioData(arrayBuf.slice(0));
+  tmp.close();
+  const dur = Math.min(decoded.duration, 20);           // cap 20s
+  const offline = new OfflineAudioContext(1, Math.ceil(16000*dur), 16000);
+  const src = offline.createBufferSource(); src.buffer = decoded; src.connect(offline.destination); src.start();
+  const rendered = await offline.startRendering();
+  return encodeWav(rendered.getChannelData(0), 16000);
 }
-function encodeWav(samples, rate) {
-  const buf = new ArrayBuffer(44 + samples.length * 2);
-  const v = new DataView(buf);
-  const ws = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
-  ws(0, "RIFF"); v.setUint32(4, 36 + samples.length * 2, true); ws(8, "WAVE");
-  ws(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-  ws(36, "data"); v.setUint32(40, samples.length * 2, true);
-  let o = 44;
-  for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    v.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true); o += 2;
+function encodeWav(samples, rate){
+  const buf = new ArrayBuffer(44 + samples.length*2), view = new DataView(buf);
+  const wr = (o,s)=>{ for(let i=0;i<s.length;i++) view.setUint8(o+i, s.charCodeAt(i)); };
+  wr(0,'RIFF'); view.setUint32(4, 36+samples.length*2, true); wr(8,'WAVE'); wr(12,'fmt ');
+  view.setUint32(16,16,true); view.setUint16(20,1,true); view.setUint16(22,1,true);
+  view.setUint32(24,rate,true); view.setUint32(28,rate*2,true); view.setUint16(32,2,true); view.setUint16(34,16,true);
+  wr(36,'data'); view.setUint32(40, samples.length*2, true);
+  let o=44; for(let i=0;i<samples.length;i++){ const s=Math.max(-1,Math.min(1,samples[i])); view.setInt16(o, s<0?s*0x8000:s*0x7FFF, true); o+=2; }
+  return new Blob([view], {type:'audio/wav'});
+}
+
+/* ═══════════════ STAGING ═══════════════ */
+async function stageBlob(blob, name){
+  try{
+    const wav = await blobToWav16k(blob);
+    state.clip = {blob:wav, name};
+    $('#staged').classList.add('show');
+    $('#stagedLabel').innerHTML = `<b>Ready: ${name}</b> — tap Identify.`;
+    $('#identifyBtn').disabled=false; $('#identifyBtn').classList.add('ready');
+    $('#enrollBtn').disabled=false;
+  }catch(e){
+    showError('Could not decode audio — try a different clip. ('+e.message+')');
   }
-  return new Blob([buf], { type: "audio/wav" });
 }
+function clearClip(){
+  state.clip=null; $('#staged').classList.remove('show');
+  $('#identifyBtn').disabled=true; $('#identifyBtn').classList.remove('ready'); $('#enrollBtn').disabled=true;
+}
+
+/* ═══════════════ IDENTIFY ═══════════════ */
+async function identify(){
+  if(!state.clip) return;
+  $('#errBanner').classList.remove('show');
+  $('#results').innerHTML=''; state.lastResultMatch=null;
+  showProgress(true);
+  const fd = new FormData();
+  fd.append('audio', state.clip.blob, 'clip.wav');
+  fd.append('isolate', String(state.isolate));
+  if(state.showId) fd.append('show_id', state.showId);
+  try{
+    if(state.mode==='scene') await runScene(fd); else await runSingle(fd);
+  }catch(e){
+    showProgress(false); showError('Analysis failed — '+e.message);
+  }
+}
+
+async function runSingle(fd){
+  const t0=Date.now(); const el=setInterval(()=>$('#progElapsed').textContent=fmtTime((Date.now()-t0)/1000)+' elapsed · usually 8–45s',200);
+  let res = await call('/identify/stream', {method:'POST', body:fd});
+  const reader = res.body.getReader(); const dec=new TextDecoder(); let bufStr='';
+  while(true){
+    const {done,value}=await reader.read(); if(done) break;
+    bufStr += dec.decode(value,{stream:true});
+    let nl; while((nl=bufStr.indexOf('\n'))>=0){
+      const line=bufStr.slice(0,nl).trim(); bufStr=bufStr.slice(nl+1);
+      if(!line) continue; let obj; try{obj=JSON.parse(line)}catch(_){continue}
+      if(obj.stage) pushStage(obj.stage);
+      if(obj.error){ clearInterval(el); showProgress(false); showError(obj.error); return; }
+      if(obj.done){ clearInterval(el); finishStages(); showProgress(false); renderSingle(obj.results||[]); }
+    }
+  }
+  clearInterval(el);
+}
+
+async function runScene(fd){
+  const t0=Date.now(); const el=setInterval(()=>$('#progElapsed').textContent=fmtTime((Date.now()-t0)/1000)+' elapsed · usually 8–45s',200);
+  ['Diarizing speakers…','Isolating music & SFX (Demucs)…','Embedding voiceprints…','Searching reference voices…','Inferring show…'].forEach((s,i)=>setTimeout(()=>pushStage(s), i*500));
+  let res = await call('/identify/show', {method:'POST', body:fd});
+  const data = await res.json();
+  clearInterval(el); finishStages(); showProgress(false); renderScene(data);
+}
+
+/* ═══════════════ RENDER ═══════════════ */
+function matchCard(m, {top=false}={}){
+  const lv = LVL[m.match_level] || LVL.none;
+  const pct = Math.round((m.confidence||0)*100);
+  const art = m.image_url ? `<img src="${esc(m.image_url)}" alt="">` : `<span class="mono">${initial(m.character_name)}</span>`;
+  const win = (m.window_agreement!=null) ? `<div class="winrow"><span>window agreement</span><span class="wb"><i style="width:${Math.round(m.window_agreement*100)}%"></i></span><span>${Math.round(m.window_agreement*100)}%</span></div>` : '';
+  return `<div class="card ${lv.cls}" style="--lvl:${lv.color}">
+    <div class="art">${art}<div class="scrim"></div>
+      ${m.show_title?`<div class="show-chip">${esc(m.show_title)}</div>`:''}
+      <div class="pill ${lv.cls}"><span class="pd"></span>${lv.pill}</div>
+    </div>
+    <div class="meta">
+      <div class="name">${esc(m.character_name||'No confident match')}</div>
+      <div class="actor">voiced by <b>${esc(m.actor_name||'—')}</b></div>
+      <div class="conf-row"><span class="lab">Confidence</span><span class="pct" style="color:${lv.color}">${pct}%</span></div>
+      <div class="confbar"><i style="width:${pct}%;background:${lv.color}"></i></div>
+      ${win}
+    </div>
+  </div>`;
+}
+function compactRow(m){
+  const lv = LVL[m.match_level] || LVL.none; const pct=Math.round((m.confidence||0)*100);
+  const av = m.image_url? `<img src="${esc(m.image_url)}" alt="">` : initial(m.character_name);
+  return `<div class="crow" style="--lvl:${lv.color}">
+    <div class="av">${av}</div>
+    <div class="info">
+      <div class="nm"><b>${esc(m.character_name||'No match')}</b><span class="badge" style="background:${lv.color}">${pct}%</span></div>
+      <div class="ac">${esc(m.actor_name||'—')}${m.show_title?' · '+esc(m.show_title):''}</div>
+      <div class="b"><i style="width:${pct}%;background:${lv.color}"></i></div>
+    </div></div>`;
+}
+function renderSingle(results){
+  const R=$('#results');
+  if(!results.length){ R.innerHTML=`<div class="empty">No character matches for this clip.<br>Try a longer or cleaner recording.</div>`; return; }
+  const [top,...rest]=results; state.lastResultMatch=top;
+  let html = `<div class="section-label">Top match</div>${matchCard(top,{top:true})}`;
+  html += `<button class="enroll-cta" id="enrollTop">➕ Correct? Add this clip to ${esc(top.character_name)}'s fingerprint</button>`;
+  if(rest.length){
+    html += `<div class="considered"><div class="ttl">ALSO CONSIDERED</div>${rest.slice(0,4).map(m=>`<div class="row"><div><b>${esc(m.character_name)}</b> <span>· ${esc(m.actor_name||'')}</span></div><span class="p">${Math.round((m.confidence||0)*100)}%</span></div>`).join('')}</div>`;
+  }
+  R.innerHTML=html;
+  $('#enrollTop').onclick = ()=>enrollTopResult(top);
+  addHistory(top); renderHistory();
+}
+function renderScene(data){
+  const R=$('#results'); let html='';
+  if(data && data.show){
+    html += `<div class="show-banner"><div class="k">Likely show</div><div class="t">${esc(data.show.title)}</div><div class="m">${data.show.speakers_matched} of ${data.show.speakers_total} speakers matched</div></div>`;
+  } else {
+    html += `<div class="banner warn show" style="position:static">No single show inferred — showing best per-speaker matches.</div>`;
+  }
+  const spk = (data && data.speakers) || {};
+  const ids = Object.keys(spk);
+  if(!ids.length){ R.innerHTML = html + `<div class="empty">No speakers detected.</div>`; return; }
+  ids.forEach((id,i)=>{
+    const matches = spk[id]||[]; const best=matches[0];
+    html += `<div><div class="spk-label">Speaker ${i+1}</div>${best?compactRow(best):'<div class="empty">no match</div>'}</div>`;
+  });
+  R.innerHTML=html;
+  if(spk[ids[0]] && spk[ids[0]][0]) { addHistory(spk[ids[0]][0]); renderHistory(); }
+}
+
+/* ─── history ─── */
+function addHistory(m){
+  state.history.unshift({character_name:m.character_name,actor_name:m.actor_name,show_title:m.show_title,confidence:m.confidence,match_level:m.match_level,image_url:m.image_url,ts:Date.now()});
+  state.history = state.history.slice(0,8); save('vazam_history', state.history);
+}
+function renderHistory(){
+  const W=$('#historyWrap');
+  if(!state.history.length){ W.innerHTML=''; return; }
+  W.innerHTML = `<div class="section-label" style="margin-top:10px">Previous recordings</div><div class="history">${state.history.map(compactRow).join('')}</div>`;
+}
+
+/* ─── enroll ─── */
+async function enrollTopResult(top){
+  if(!state.clip || top.actor_id==null) return;
+  const btn=$('#enrollTop'); btn.textContent='Adding…';
+  try{
+    const fd=new FormData(); fd.append('audio',state.clip.blob,'clip.wav');
+    fd.append('actor_id',top.actor_id); fd.append('voice_label',top.character_name); fd.append('isolate',String(state.isolate));
+    let res=await call('/enroll',{method:'POST',body:fd});
+    const d = await res.json();
+    btn.classList.add('done'); btn.textContent=`✓ Added — ${d.samples} clips`;
+  }catch(e){ btn.textContent='✕ '+e.message; }
+}
+async function enrollStaged(){
+  if(!state.clip) return; const sel=$('#enrollSelect'); const opt=sel.selectedOptions[0]; if(!opt||!opt.value) return;
+  const btn=$('#enrollBtn'); btn.textContent='Adding…'; btn.disabled=true;
+  try{
+    const fd=new FormData(); fd.append('audio',state.clip.blob,'clip.wav');
+    fd.append('actor_id',opt.value); fd.append('voice_label',opt.dataset.label||opt.textContent); fd.append('isolate',String(state.isolate));
+    let res=await call('/enroll',{method:'POST',body:fd});
+    const d=await res.json();
+    btn.textContent=`✓ Added — ${d.samples} clips`;
+  }catch(e){ btn.textContent='✕ failed'; btn.disabled=false; }
+}
+
+/* ─── progress helpers ─── */
+const stageEls=[];
+function showProgress(on){ $('#progress').classList.toggle('show',on); if(on){ $('#log').innerHTML=''; stageEls.length=0; $('#pbarFill').style.width='8%'; } }
+function pushStage(text){
+  stageEls.forEach(e=>e.classList.replace('active','done'));
+  stageEls.forEach(e=>{ if(e.classList.contains('done')) e.querySelector('.ic').textContent='✓'; });
+  const div=document.createElement('div'); div.className='line active';
+  div.innerHTML=`<span class="ic">▸</span>${esc(text)}`; $('#log').appendChild(div); stageEls.push(div);
+  $('#log').scrollTop=$('#log').scrollHeight;
+  $('#progStage').textContent=text.replace(/…$/,'');
+  $('#pbarFill').style.width = Math.min(92, 8+stageEls.length*16)+'%';
+}
+function finishStages(){ stageEls.forEach(e=>{e.classList.remove('active');e.classList.add('done');e.querySelector('.ic').textContent='✓';}); $('#pbarFill').style.width='100%'; $('#progStage').textContent='Done'; }
+
+function showError(msg){ const b=$('#errBanner'); b.textContent='⚠ '+msg; b.classList.add('show'); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+const wait = ms => new Promise(r=>setTimeout(r,ms));
+
+/* ═══════════════ INIT / EVENTS ═══════════════ */
+$('#recBtn').onclick = toggleRecord;
+$('#fileInput').onchange = e => { const f=e.target.files[0]; if(f) stageBlob(f, f.name.replace(/\.[^.]+$/,'')); };
+$('#stagedClear').onclick = clearClip;
+$('#identifyBtn').onclick = identify;
+$('#enrollBtn').onclick = enrollStaged;
+$('#mode').onclick = e => { const b=e.target.closest('button'); if(!b)return; $$('#mode button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); state.mode=b.dataset.mode; };
+$('#isolate').onclick = function(){ state.isolate=!state.isolate; this.classList.toggle('on',state.isolate); this.setAttribute('aria-pressed',state.isolate); };
+$('#showFilter').onchange = e => state.showId = e.target.value;
+$('#backendUrl').value = load('vazam_backend','') || '';
+$('#backendUrl').onchange = e => save('vazam_backend', e.target.value);
+
+async function populate(){
+  // shows
+  try{ let r=await call('/shows'); const shows=await r.json();
+    shows.forEach(s=>{const o=document.createElement('option');o.value=s.id;o.textContent=s.title;$('#showFilter').appendChild(o);});
+  }catch(e){}
+  // voices
+  try{ let r=await call('/voices'); const v=await r.json();
+    $('#enrollSelect').innerHTML='<option value="">Choose a character…</option>';
+    v.forEach(x=>{const o=document.createElement('option');o.value=x.actor_id;o.dataset.label=x.voice_label;o.textContent=`${x.actor_name} — ${x.voice_label} (${x.samples})`;$('#enrollSelect').appendChild(o);});
+  }catch(e){ $('#enrollSelect').innerHTML='<option value="">No voices enrolled yet</option>'; }
+}
+renderHistory(); populate();
 </script>
 </body>
 </html>

@@ -1,187 +1,203 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0e">
 <title>Vazam — Characters</title>
 <style>
-  :root {
-    --bg: #0d1117; --panel: #161b22; --line: #30363d; --txt: #e6edf3;
-    --muted: #8b949e; --accent: #2f81f7; --good: #2ea043;
+  :root{
+    --bg:#0a0a0e; --surface:#101016; --raise:rgba(255,255,255,.04);
+    --line:rgba(255,255,255,.08); --line2:rgba(255,255,255,.14);
+    --txt:#e9e9ee; --muted:#9a9aa6; --muted2:#6b6b78;
+    --accent:#811aff; --accent2:#ff2e6a; --accent-soft:rgba(129,26,255,.14);
+    --good:#2bd576;
+    --display:'Space Grotesk', system-ui, -apple-system, Segoe UI, sans-serif;
+    --body:system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    --mono:ui-monospace, SFMono-Regular, Menlo, monospace;
   }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--txt); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 16px; max-width: 820px; margin: 0 auto; }
-  a { color: var(--accent); text-decoration: none; }
-  h1 { font-size: 22px; margin: 6px 0; }
-  h1 span { color: var(--accent); }
-  .top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-  .sub { color: var(--muted); font-size: 13px; }
-  .controls { display: flex; gap: 12px; align-items: center; margin: 14px 0; flex-wrap: wrap; }
-  input[type=text], input[type=search] { flex: 1; min-width: 180px; background: var(--panel); border: 1px solid var(--line); color: var(--txt); border-radius: 8px; padding: 9px 12px; font-size: 14px; }
-  .toggle { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); white-space: nowrap; }
-  .row { display: flex; align-items: center; gap: 12px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; cursor: pointer; background: var(--panel); }
-  .row:hover { border-color: var(--accent); }
-  .row img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: var(--bg); flex-shrink: 0; }
-  .row .nm { font-weight: 600; }
-  .row .meta { color: var(--muted); font-size: 12px; }
-  .row .grow { flex: 1; min-width: 0; }
-  .row .grow > div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .badge { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 20px; white-space: nowrap; }
-  .badge.has { background: rgba(46,160,67,.18); color: #4ac26b; }
-  .badge.no { background: rgba(110,118,129,.16); color: var(--muted); }
-  .status { color: var(--muted); font-size: 14px; padding: 12px 0; }
-  /* Modal */
-  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: flex-start; justify-content: center; padding: 20px; overflow-y: auto; }
-  .overlay.open { display: flex; }
-  .modal { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; max-width: 560px; width: 100%; margin-top: 24px; }
-  .modal h2 { margin: 0 0 2px; font-size: 20px; }
-  .modal .who { color: var(--muted); font-size: 14px; margin-bottom: 14px; }
-  .modal img { width: 100%; max-height: 240px; object-fit: contain; border-radius: 10px; background: var(--bg); margin-bottom: 14px; }
-  label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 5px; }
-  .modal input[type=text] { width: 100%; }
-  .src { border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; margin-top: 8px; font-size: 13px; }
-  .src .lbl { font-weight: 600; }
-  .src .det { color: var(--muted); font-size: 12px; margin-top: 3px; }
-  .src a { word-break: break-all; }
-  .btnrow { display: flex; gap: 10px; margin-top: 18px; }
-  button { border: 0; border-radius: 9px; padding: 11px 16px; font-size: 14px; font-weight: 600; cursor: pointer; }
-  .save { background: var(--accent); color: #fff; flex: 1; }
-  .save:disabled { opacity: .6; }
-  .close { background: transparent; color: var(--muted); border: 1px solid var(--line); }
-  .savemsg { font-size: 13px; color: var(--good); margin-top: 8px; min-height: 18px; }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--body)}
+  body{min-height:100dvh;-webkit-font-smoothing:antialiased;background:radial-gradient(120% 50% at 50% -8%, #16131f, #0a0a0e 60%)}
+  .wrap{max-width:480px;margin:0 auto;padding:14px 18px 40px}
+  button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+  a{color:inherit;text-decoration:none}
+
+  .top{display:flex;align-items:center;gap:10px;padding-top:10px}
+  .back{font-size:13px;color:var(--txt);background:var(--raise);border:1px solid var(--line);padding:8px 12px;border-radius:11px}
+  .ttl{font-family:var(--display);font-weight:700;font-size:21px;letter-spacing:-.01em}
+  .count{font-size:12.5px;color:var(--muted);margin-top:4px}
+
+  .search{display:flex;align-items:center;gap:9px;margin-top:14px;background:var(--raise);border:1px solid var(--line);border-radius:13px;padding:0 13px}
+  .search input{flex:1;font-family:inherit;font-size:14px;color:var(--txt);background:none;border:none;outline:none;padding:13px 0}
+  .search .ic{color:var(--muted2)}
+  .filters{display:flex;align-items:center;justify-content:space-between;margin-top:11px}
+  .toggle{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--txt)}
+  .sw{width:32px;height:18px;border-radius:9px;background:#3a3a44;position:relative;transition:.18s}
+  .sw::after{content:'';position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:.18s}
+  .toggle.on .sw{background:var(--good)} .toggle.on .sw::after{left:16px}
+  .shown{font-size:11.5px;color:var(--muted2)}
+
+  .list{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+  .row{display:flex;gap:12px;align-items:center;padding:10px 12px;border-radius:14px;background:var(--raise);border:1px solid var(--line);transition:.12s;text-align:left;width:100%}
+  .row:active{transform:scale(.99)} .row:hover{border-color:var(--line2)}
+  .av{width:46px;height:46px;border-radius:11px;overflow:hidden;background:linear-gradient(140deg,#241a33,#120e1a);display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:18px;color:rgba(255,255,255,.55);flex:0 0 auto}
+  .av img{width:100%;height:100%;object-fit:cover}
+  .info{flex:1;min-width:0}
+  .info .nm{font-size:14.5px;font-weight:600}
+  .info .sub{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+  .badge{font-size:11px;font-weight:600;padding:5px 9px;border-radius:9px;white-space:nowrap}
+  .badge.has{color:var(--good);background:rgba(43,213,118,.12);border:1px solid rgba(43,213,118,.3)}
+  .badge.no{color:var(--muted);background:var(--raise);border:1px solid var(--line)}
+
+  .empty{text-align:center;color:var(--muted2);font-size:13px;padding:40px 0}
+  .more{text-align:center;color:var(--muted2);font-size:12px;padding:16px 0}
+
+  /* modal */
+  .overlay{position:fixed;inset:0;background:rgba(4,4,8,.72);backdrop-filter:blur(4px);display:none;align-items:flex-end;justify-content:center;z-index:10}
+  .overlay.show{display:flex}
+  .modal{width:100%;max-width:480px;max-height:92dvh;overflow-y:auto;background:var(--surface);border:1px solid var(--line2);border-bottom:none;border-radius:24px 24px 0 0;animation:rise .25s ease}
+  @media(min-width:520px){ .overlay{align-items:center} .modal{border-radius:24px;border-bottom:1px solid var(--line2)} }
+  .m-art{position:relative;height:170px;background:linear-gradient(140deg,#241a33,#120e1a);overflow:hidden}
+  .m-art img{width:100%;height:100%;object-fit:cover}
+  .m-art .mono{position:absolute;right:-8px;bottom:-26px;font-family:var(--display);font-size:175px;font-weight:700;color:rgba(255,255,255,.07);line-height:.8}
+  .m-art .scrim{position:absolute;left:0;right:0;bottom:0;height:64px;background:linear-gradient(transparent,var(--surface))}
+  .m-art .close{position:absolute;top:12px;right:12px;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,.45);display:grid;place-items:center;color:#dcdce4;font-size:16px}
+  .m-body{padding:4px 18px 22px}
+  .m-name{font-family:var(--display);font-size:24px;font-weight:700}
+  .m-sub{font-size:13px;color:var(--muted);margin-top:2px}
+  .field{display:flex;flex-direction:column;gap:6px;margin-top:14px}
+  .field label{font-size:11px;letter-spacing:.05em;color:var(--muted2);text-transform:uppercase}
+  .field input{font-family:inherit;font-size:13px;color:var(--txt);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:11px 12px}
+  .save{margin-top:14px;width:100%;font-family:var(--display);font-weight:600;font-size:15px;color:#fff;background:linear-gradient(140deg,var(--accent),var(--accent2));padding:13px;border-radius:12px;box-shadow:0 12px 30px -12px rgba(129,40,255,.7)}
+  .save.done{background:rgba(43,213,118,.16);color:var(--good);box-shadow:none}
+  .src-ttl{font-size:11px;letter-spacing:.05em;color:var(--muted2);text-transform:uppercase;margin-top:22px}
+  .src{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:11px;background:var(--raise);margin-top:8px;font-size:12.5px}
+  .src .l{display:flex;align-items:center;gap:8px;min-width:0}
+  .src .l a{color:var(--accent2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .src .meta{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .src .v{color:var(--good)} .src .uv{color:var(--muted2)}
+  .src-empty{font-size:12.5px;color:var(--muted2);margin-top:8px}
+  @keyframes rise{from{transform:translateY(24px);opacity:.4}to{transform:translateY(0);opacity:1}}
+  @media (prefers-reduced-motion:reduce){.modal{animation:none}}
 </style>
 </head>
 <body>
-  <div class="top">
-    <h1>Vaz<span>am</span> · Characters</h1>
-    <a href="/">← Dashboard</a>
+  <div class="wrap">
+    <div class="top"><a class="back" href="/">‹ Dashboard</a></div>
+    <div style="margin-top:12px">
+      <div class="ttl">Characters</div>
+      <div class="count" id="count">Loading…</div>
+    </div>
+
+    <div class="search"><span class="ic">⌕</span><input id="q" placeholder="name, actor, show, occupation…" autocomplete="off"></div>
+    <div class="filters">
+      <button class="toggle" id="voiceOnly" aria-pressed="false"><span class="sw"></span>Only with a voice</button>
+      <span class="shown" id="shown"></span>
+    </div>
+
+    <div class="list" id="list"></div>
   </div>
-  <div class="sub" id="count">Loading…</div>
 
-  <div class="controls">
-    <input type="search" id="search" placeholder="Search name, actor, or show…" />
-    <label class="toggle"><input type="checkbox" id="voicedOnly" /> Only with a voice</label>
-  </div>
-
-  <div id="list"></div>
-  <div class="status" id="status"></div>
-
+  <!-- DETAIL MODAL -->
   <div class="overlay" id="overlay">
     <div class="modal" id="modal"></div>
   </div>
 
 <script>
-const $ = (s) => document.querySelector(s);
-let all = [];
+"use strict";
+const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+const CAP=400;
+const api=()=>{ try{return (JSON.parse(localStorage.getItem('vazam_backend'))||'').replace(/\/$/,'')}catch(e){return ''} };
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const initial=n=>(n||'?').trim().charAt(0).toUpperCase()||'?';
 
-async function load() {
-  try {
-    const res = await fetch("/characters");
-    all = await res.json();
-    $("#count").textContent = all.length + " characters · " + all.filter((c) => c.samples > 0).length + " with a voice fingerprint";
-    render();
-  } catch (e) { $("#status").textContent = "Failed to load: " + e.message; }
+let ALL=[], voiceOnly=false, query='';
+
+async function call(path,opts){
+  const r=await fetch(api()+path,opts); if(!r.ok) throw new Error(r.status); return r;
 }
 
-function render() {
-  const q = $("#search").value.trim().toLowerCase();
-  const voiced = $("#voicedOnly").checked;
-  const rows = all.filter((c) => {
-    if (voiced && !c.samples) return false;
-    if (!q) return true;
-    return [c.name, c.actor_name, c.show_title, c.occupation].some((v) => (v || "").toLowerCase().includes(q));
-  });
-  const list = $("#list");
-  list.innerHTML = "";
-  rows.slice(0, 400).forEach((c) => list.appendChild(rowEl(c)));
-  $("#status").textContent =
-    rows.length > 400 ? "Showing first 400 of " + rows.length + " — refine your search." :
-    rows.length === 0 ? "No matches." : "";
+async function loadAll(){
+  let r;
+  try{ r=await call('/characters'); }
+  catch(e){ $('#count').textContent='Failed to load characters.'; $('#list').innerHTML=`<div class="empty">Could not reach the server (${esc(e.message)}).</div>`; return; }
+  ALL = await r.json();
+  // voices first, then by name
+  ALL.sort((a,b)=> (b.samples>0)-(a.samples>0) || String(a.name).localeCompare(b.name));
+  const withVoice = ALL.filter(c=>c.samples>0).length;
+  $('#count').textContent = `${ALL.length} characters · ${withVoice} with a voice fingerprint`;
+  render();
 }
 
-function rowEl(c) {
-  const el = document.createElement("div");
-  el.className = "row";
-  el.onclick = () => openDetail(c.id);
-  const img = c.image_url
-    ? `<img loading="lazy" src="${esc(c.image_url)}" onerror="this.style.visibility='hidden'" />`
-    : `<img style="visibility:hidden" />`;
-  el.innerHTML =
-    img +
-    `<div class="grow">` +
-      `<div class="nm">${esc(c.name)}</div>` +
-      `<div class="meta">${esc(c.actor_name || "—")}${c.show_title ? " · " + esc(c.show_title) : ""}${c.occupation ? " · " + esc(c.occupation) : ""}</div>` +
-    `</div>` +
-    (c.samples
-      ? `<span class="badge has">${c.samples} clip${c.samples === 1 ? "" : "s"}</span>`
-      : `<span class="badge no">no voice</span>`);
-  return el;
+function match(c){
+  if(voiceOnly && !(c.samples>0)) return false;
+  if(!query) return true;
+  const hay=`${c.name} ${c.actor_name||''} ${c.show_title||''} ${c.occupation||''}`.toLowerCase();
+  return hay.includes(query);
+}
+function render(){
+  const filtered = ALL.filter(match);
+  const slice = filtered.slice(0,CAP);
+  $('#shown').textContent = filtered.length ? `${Math.min(filtered.length,CAP)} of ${filtered.length}` : '';
+  if(!filtered.length){ $('#list').innerHTML=`<div class="empty">No characters match “${esc(query)}”.<br>Try a different name, actor, or show.</div>`; return; }
+  $('#list').innerHTML = slice.map(c=>{
+    const av = c.image_url? `<img src="${esc(c.image_url)}" alt="" loading="lazy">` : initial(c.name);
+    const sub = [c.actor_name,c.show_title,c.occupation].filter(Boolean).map(esc).join(' · ');
+    const badge = c.samples>0 ? `<span class="badge has">${c.samples} clip${c.samples>1?'s':''}</span>` : `<span class="badge no">no voice</span>`;
+    return `<button class="row" data-id="${c.id}"><div class="av">${av}</div><div class="info"><div class="nm">${esc(c.name)}</div><div class="sub">${sub||'—'}</div></div>${badge}</button>`;
+  }).join('') + (filtered.length>CAP ? `<div class="more">Showing first ${CAP} — refine your search to see more.</div>` : '');
 }
 
-async function openDetail(id) {
-  $("#overlay").classList.add("open");
-  $("#modal").innerHTML = `<div class="status">Loading…</div>`;
-  try {
-    const res = await fetch("/characters/" + id);
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    renderModal(await res.json());
-  } catch (e) { $("#modal").innerHTML = `<div class="status">Failed: ${esc(e.message)}</div>`; }
+/* ─── detail modal ─── */
+async function openDetail(id){
+  const overlay=$('#overlay'), modal=$('#modal');
+  overlay.classList.add('show');
+  modal.innerHTML=`<div style="padding:60px;text-align:center;color:var(--muted2)">Loading…</div>`;
+  let c;
+  try{ const r=await call('/characters/'+id); c=await r.json(); }
+  catch(e){ modal.innerHTML=`<div style="padding:60px;text-align:center;color:var(--muted2)">Failed to load (${esc(e.message)}).</div>`; return; }
+  const art = c.image_url? `<img src="${esc(c.image_url)}" alt="">` : `<span class="mono">${initial(c.name)}</span>`;
+  const emb = c.embeddings||[];
+  const sub=[c.actor_name,c.show_title,c.occupation].filter(Boolean).map(esc).join(' · ');
+  modal.innerHTML=`
+    <div class="m-art">${art}<div class="scrim"></div><button class="close" id="mClose">✕</button></div>
+    <div class="m-body">
+      <div class="m-name">${esc(c.name)}</div>
+      <div class="m-sub">${sub||'—'}</div>
+      <div class="field"><label>Image URL</label><input id="fImg" value="${esc(c.image_url||'')}" placeholder="https://…"></div>
+      <div class="field"><label>Occupation</label><input id="fOcc" value="${esc(c.occupation||'')}" placeholder="e.g. bounty hunter"></div>
+      <button class="save" id="mSave">Save changes</button>
+      <div class="src-ttl">Voice sources · ${emb.length} clip${emb.length===1?'':'s'}</div>
+      ${emb.length? emb.map(e=>`<div class="src">
+          <div class="l"><span class="${e.verified?'v':'uv'}">${e.verified?'✓':'○'}</span>
+            ${e.source_url?`<a href="${esc(e.source_url)}" target="_blank" rel="noopener">${esc(e.voice_label||e.audio_source||'clip')}</a>`:`<span>${esc(e.voice_label||e.audio_source||'clip')}</span>`}
+            <span style="color:var(--muted2)">· ${esc(e.audio_source||'')}</span></div>
+          <div class="meta">${e.duration_s!=null?(+e.duration_s).toFixed(1)+'s':''}${e.quality_score!=null?' · q '+(+e.quality_score).toFixed(2):''}</div>
+        </div>`).join('') : `<div class="src-empty">No voice fingerprint yet — record a clip on the dashboard and enroll it.</div>`}
+    </div>`;
+  $('#mClose').onclick=closeDetail;
+  $('#mSave').onclick=async function(){
+    const btn=this; btn.textContent='Saving…';
+    const body={image_url:$('#fImg').value, occupation:$('#fOcc').value};
+    try{
+      await call('/characters/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    }catch(e){ btn.classList.remove('done'); btn.textContent='✕ '+e.message; return; }
+    const idx=ALL.findIndex(x=>String(x.id)===String(id));
+    if(idx>=0){ ALL[idx].image_url=body.image_url; ALL[idx].occupation=body.occupation; }
+    btn.classList.add('done'); btn.textContent='✓ Saved'; render();
+  };
 }
+function closeDetail(){ $('#overlay').classList.remove('show'); }
 
-function renderModal(c) {
-  const sources = (c.embeddings || []).map((e) => {
-    const urls = (e.source_url || "").split(",").filter(Boolean)
-      .map((u) => `<a href="${esc(u.trim())}" target="_blank" rel="noopener">${esc(u.trim())}</a>`).join("<br>") || "—";
-    const det = [
-      e.audio_source ? "type: " + esc(e.audio_source) : "",
-      e.duration_s != null ? Math.round(e.duration_s) + "s" : "",
-      e.quality_score != null ? "quality " + e.quality_score.toFixed(2) : "",
-      e.verified ? "✓ verified" : "unverified",
-    ].filter(Boolean).join(" · ");
-    return `<div class="src"><div class="lbl">${esc(e.voice_label)}</div><div class="det">${det}</div><div class="det">${urls}</div></div>`;
-  }).join("");
+/* ─── events ─── */
+$('#list').onclick=e=>{ const r=e.target.closest('.row'); if(r) openDetail(r.dataset.id); };
+$('#q').oninput=e=>{ query=e.target.value.trim().toLowerCase(); render(); };
+$('#voiceOnly').onclick=function(){ voiceOnly=!voiceOnly; this.classList.toggle('on',voiceOnly); this.setAttribute('aria-pressed',voiceOnly); render(); };
+$('#overlay').onclick=e=>{ if(e.target===$('#overlay')) closeDetail(); };
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDetail(); });
 
-  $("#modal").innerHTML =
-    `<h2>${esc(c.name)}</h2>` +
-    `<div class="who">${esc(c.actor_name || "no actor linked")}${c.show_title ? " · " + esc(c.show_title) : ""}</div>` +
-    (c.image_url ? `<img id="mImg" src="${esc(c.image_url)}" onerror="this.style.display='none'" />` : "") +
-    `<label>Image URL</label><input type="text" id="fImg" value="${esc(c.image_url || "")}" placeholder="https://…" />` +
-    `<label>Occupation</label><input type="text" id="fOcc" value="${esc(c.occupation || "")}" placeholder="e.g. Pirate Captain" />` +
-    `<div class="savemsg" id="saveMsg"></div>` +
-    `<div class="btnrow"><button class="save" id="saveBtn">Save</button><button class="close" id="closeBtn">Close</button></div>` +
-    `<label style="margin-top:18px">Voice embedding source files (${(c.embeddings || []).length})</label>` +
-    (sources || `<div class="status">No voice embeddings for this character yet.</div>`);
-
-  $("#closeBtn").onclick = closeModal;
-  $("#saveBtn").onclick = () => saveDetail(c.id);
-}
-
-async function saveDetail(id) {
-  const btn = $("#saveBtn"); btn.disabled = true; $("#saveMsg").textContent = "Saving…";
-  try {
-    const res = await fetch("/characters/" + id, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image_url: $("#fImg").value, occupation: $("#fOcc").value }),
-    });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const updated = await res.json();
-    $("#saveMsg").textContent = "✓ Saved";
-    // reflect in the cached list
-    const i = all.findIndex((x) => x.id === id);
-    if (i >= 0) { all[i].image_url = updated.image_url; all[i].occupation = updated.occupation; }
-    if ($("#mImg")) { $("#mImg").src = updated.image_url || ""; $("#mImg").style.display = updated.image_url ? "" : "none"; }
-    render();
-  } catch (e) { $("#saveMsg").style.color = "#f85149"; $("#saveMsg").textContent = "Failed: " + e.message; }
-  btn.disabled = false;
-}
-
-function closeModal() { $("#overlay").classList.remove("open"); }
-$("#overlay").addEventListener("click", (e) => { if (e.target === $("#overlay")) closeModal(); });
-$("#search").addEventListener("input", render);
-$("#voicedOnly").addEventListener("change", render);
-function esc(s) { return (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
-load();
+loadAll();
 </script>
 </body>
 </html>
