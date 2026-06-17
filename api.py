@@ -127,6 +127,32 @@ async def _basic_auth_middleware(request, call_next):
 _STATIC = os.path.join(os.path.dirname(__file__), "static")
 _DASHBOARD = os.path.join(_STATIC, "index.html")
 
+# Stored enrolled-clip audio so the dashboard can play clips back. Lives on a
+# server volume (VAZAM_AUDIO_DIR), keyed by embedding id — not in the DB.
+_AUDIO_DIR = os.environ.get("VAZAM_AUDIO_DIR") or os.path.join(os.path.dirname(__file__), "enroll_audio")
+os.makedirs(_AUDIO_DIR, exist_ok=True)
+_AUDIO_MEDIA = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4",
+                ".ogg": "audio/ogg", ".flac": "audio/flac"}
+
+
+def _store_audio(emb_id: int, data: bytes, ext: str) -> str:
+    """Persist enrolled-clip bytes as <emb_id><ext>; returns the filename."""
+    ext = ext.lower() if ext.lower() in _AUDIO_MEDIA else ".wav"
+    fname = f"{emb_id}{ext}"
+    with open(os.path.join(_AUDIO_DIR, fname), "wb") as f:
+        f.write(data)
+    return fname
+
+
+def _remove_audio(fname) -> None:
+    """Best-effort delete of a stored audio file."""
+    if not fname:
+        return
+    try:
+        os.remove(os.path.join(_AUDIO_DIR, os.path.basename(fname)))
+    except OSError:
+        pass
+
 
 @app.get("/", include_in_schema=False)
 def dashboard():
@@ -252,6 +278,38 @@ async def identify(
     finally:
         os.unlink(path)
 
+    return IdentifyResponse(results=[IdentificationMatch(**r.to_dict()) for r in results])
+
+
+class UrlIdentify(BaseModel):
+    url: str
+    isolate: bool = False
+    show_id: Optional[int] = None
+    top_k: int = Field(5, ge=1, le=20)
+
+
+@app.post("/identify/url", response_model=IdentifyResponse, tags=["Identification"])
+def identify_url(body: UrlIdentify):
+    """Identify the voice actor from a YouTube (or other) URL.
+
+    Downloads a short clip server-side (first ~30s) via yt-dlp, then runs the
+    normal identification pipeline. Slower than a direct upload and subject to
+    the source being reachable.
+    """
+    if db.get_embedding_count() == 0:
+        raise HTTPException(503, "No embeddings in index. Add voice samples first.")
+
+    import tempfile
+
+    import ytclip
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            path = ytclip.download_clip(body.url, tmp, max_seconds=30)
+        except ytclip.DownloadError as exc:
+            raise HTTPException(400, str(exc))
+        results = pipeline.identify(
+            path, top_k=body.top_k, isolate=body.isolate, show_id=body.show_id, verify=True,
+        )
     return IdentifyResponse(results=[IdentificationMatch(**r.to_dict()) for r in results])
 
 
@@ -410,13 +468,18 @@ async def enroll(
     path = await _save_upload(audio)
     try:
         embedding = pipeline.embed_file(path, isolate=isolate)
+        with open(path, "rb") as f:
+            audio_bytes = f.read()
     finally:
         os.unlink(path)
 
-    db.add_embedding(
+    emb_id = db.add_embedding(
         actor_id=actor_id, embedding=embedding, character_id=character_id,
         voice_label=voice_label, audio_source="dashboard-enroll", verified=False,
     )
+    # Keep the clip so it can be played back from the character modal.
+    ext = os.path.splitext(audio.filename or "")[1] or ".wav"
+    db.set_embedding_audio(emb_id, _store_audio(emb_id, audio_bytes, ext))
     samples = next(
         (v["samples"] for v in db.list_voices()
          if v["actor_id"] == actor_id and v["voice_label"] == voice_label), 1,
@@ -424,11 +487,75 @@ async def enroll(
     return {"ok": True, "actor_name": actor["name"], "voice_label": voice_label, "samples": samples}
 
 
+class UrlEnroll(BaseModel):
+    url: str
+    actor_id: int
+    voice_label: str
+    isolate: bool = True
+
+
+@app.post("/enroll/url", tags=["Identification"])
+def enroll_url(body: UrlEnroll):
+    """Add a clip from a YouTube (or other) URL to a character's fingerprint.
+
+    Downloads a short clip server-side (first ~60s), embeds it, and stores it as
+    an additional reference — the same as /enroll but sourced from a link. The
+    URL is kept as the clip's source for provenance.
+    """
+    actor = db.get_actor(body.actor_id)
+    if not actor:
+        raise HTTPException(404, f"Actor {body.actor_id} not found")
+
+    existing = db.find_voice(body.actor_id, body.voice_label)
+    character_id = existing["character_id"] if existing else None
+
+    import tempfile
+
+    import ytclip
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            path = ytclip.download_clip(body.url, tmp, max_seconds=60)
+        except ytclip.DownloadError as exc:
+            raise HTTPException(400, str(exc))
+        embedding = pipeline.embed_file(path, isolate=body.isolate)
+        with open(path, "rb") as f:
+            audio_bytes = f.read()
+
+    emb_id = db.add_embedding(
+        actor_id=body.actor_id, embedding=embedding, character_id=character_id,
+        voice_label=body.voice_label, audio_source="dashboard-enroll-url",
+        source_url=body.url, verified=False,
+    )
+    db.set_embedding_audio(emb_id, _store_audio(emb_id, audio_bytes, ".mp3"))
+    samples = next(
+        (v["samples"] for v in db.list_voices()
+         if v["actor_id"] == body.actor_id and v["voice_label"] == body.voice_label), 1,
+    )
+    return {"ok": True, "actor_name": actor["name"], "voice_label": body.voice_label,
+            "samples": samples, "source_url": body.url}
+
+
+@app.get("/embeddings/{embedding_id}/audio", tags=["Identification"])
+def embedding_audio(embedding_id: int):
+    """Stream the stored audio clip for an enrolled embedding (if any)."""
+    row = db.get_embedding(embedding_id)
+    if not row or not row.get("audio_path"):
+        raise HTTPException(404, "No stored audio for this clip")
+    fname = os.path.basename(row["audio_path"])
+    full = os.path.join(_AUDIO_DIR, fname)
+    if not os.path.exists(full):
+        raise HTTPException(404, "Audio file missing")
+    media = _AUDIO_MEDIA.get(os.path.splitext(fname)[1].lower(), "application/octet-stream")
+    return FileResponse(full, media_type=media)
+
+
 @app.delete("/embeddings/{embedding_id}", tags=["Identification"])
 def delete_embedding(embedding_id: int):
     """Remove one embedding (a single clip) from a character's fingerprint."""
+    row = db.get_embedding(embedding_id)
     if not db.delete_embedding(embedding_id):
         raise HTTPException(404, f"Embedding {embedding_id} not found")
+    _remove_audio(row.get("audio_path") if row else None)
     return {"ok": True, "deleted": embedding_id}
 
 

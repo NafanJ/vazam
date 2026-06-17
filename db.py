@@ -291,7 +291,7 @@ class VazamDB:
         show = self.get_show(c["show_id"]) if c.get("show_id") else None
         embeddings = (
             self._client.table("vazam_embeddings")
-            .select("id, voice_label, audio_source, source_url, duration_s, quality_score, verified")
+            .select("id, voice_label, audio_source, source_url, duration_s, quality_score, verified, audio_path")
             .eq("character_id", character_id)
             .execute()
             .data
@@ -372,6 +372,26 @@ class VazamDB:
             .execute()
         )
         return bool(res.data)
+
+    def get_embedding(self, embedding_id: int) -> Optional[dict]:
+        """Fetch one embedding row (sans the vector) by id, or None."""
+        rows = (
+            self._client.table("vazam_embeddings")
+            .select("id, actor_id, character_id, voice_label, audio_source, source_url, audio_path")
+            .eq("id", embedding_id)
+            .execute()
+            .data
+        )
+        return rows[0] if rows else None
+
+    def set_embedding_audio(self, embedding_id: int, audio_path: Optional[str]) -> None:
+        """Record (or clear) the stored audio filename for an embedding."""
+        (
+            self._client.table("vazam_embeddings")
+            .update({"audio_path": audio_path})
+            .eq("id", embedding_id)
+            .execute()
+        )
 
     def list_voices(self) -> list[dict]:
         """Distinct stored voices (actor + voice_label) with sample counts.

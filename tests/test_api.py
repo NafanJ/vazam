@@ -142,6 +142,88 @@ def test_delete_embedding_removes_from_fingerprint(api_client, random_embedding)
     assert api_client.delete(f"/embeddings/{emb_id}").status_code == 404
 
 
+def test_enroll_stores_playable_audio(api_client, random_embedding):
+    import api
+    actor_id = api.db.add_actor("Mayumi Tanaka", anilist_id=30)
+    show_id = api.db.add_show("One Piece", anilist_id=31)
+    cid = api.db.add_character("Luffy", show_id, actor_id, anilist_id=32)
+    # Seed a character-linked embedding so the enroll inherits character_id.
+    api.db.add_embedding(actor_id, random_embedding, character_id=cid, voice_label="Luffy")
+
+    resp = api_client.post(
+        "/enroll",
+        files={"audio": ("c.wav", make_wav_bytes(), "audio/wav")},
+        data={"actor_id": str(actor_id), "voice_label": "Luffy", "isolate": "false"},
+    )
+    assert resp.status_code == 200
+
+    enrolled = [e for e in api_client.get(f"/characters/{cid}").json()["embeddings"]
+                if e.get("audio_path")]
+    assert len(enrolled) == 1
+    eid = enrolled[0]["id"]
+
+    audio = api_client.get(f"/embeddings/{eid}/audio")
+    assert audio.status_code == 200
+    assert audio.headers["content-type"].startswith("audio/")
+    assert len(audio.content) > 0
+
+    # Deleting the embedding removes the stored audio too.
+    assert api_client.delete(f"/embeddings/{eid}").status_code == 200
+    assert api_client.get(f"/embeddings/{eid}/audio").status_code == 404
+
+
+def test_identify_url_downloads_then_identifies(api_client, random_embedding, monkeypatch, tmp_path):
+    import api
+    import ytclip
+    aid = api.db.add_actor("Steve Blum", anilist_id=40)
+    api.db.add_embedding(aid, random_embedding, voice_label="Spike Spiegel")
+    clip = tmp_path / "clip.mp3"; clip.write_bytes(make_wav_bytes())
+    monkeypatch.setattr(ytclip, "download_clip", lambda url, out, max_seconds=30: str(clip))
+
+    resp = api_client.post("/identify/url", json={"url": "https://youtu.be/x", "isolate": False})
+    assert resp.status_code == 200
+    assert "results" in resp.json()
+
+
+def test_identify_url_download_failure_is_400(api_client, random_embedding, monkeypatch):
+    import api
+    import ytclip
+    aid = api.db.add_actor("Steve Blum", anilist_id=41)
+    api.db.add_embedding(aid, random_embedding, voice_label="Spike Spiegel")
+
+    def boom(*a, **k):
+        raise ytclip.DownloadError("bad url")
+    monkeypatch.setattr(ytclip, "download_clip", boom)
+
+    resp = api_client.post("/identify/url", json={"url": "not-a-real-link"})
+    assert resp.status_code == 400
+    assert "bad url" in resp.json()["detail"]
+
+
+def test_enroll_url_adds_clip_and_stores_audio(api_client, random_embedding, monkeypatch, tmp_path):
+    import api
+    import ytclip
+    aid = api.db.add_actor("Mayumi Tanaka", anilist_id=42)
+    show_id = api.db.add_show("One Piece", anilist_id=43)
+    cid = api.db.add_character("Luffy", show_id, aid, anilist_id=44)
+    api.db.add_embedding(aid, random_embedding, character_id=cid, voice_label="Luffy")
+    clip = tmp_path / "clip.mp3"; clip.write_bytes(make_wav_bytes())
+    monkeypatch.setattr(ytclip, "download_clip", lambda url, out, max_seconds=60: str(clip))
+
+    resp = api_client.post(
+        "/enroll/url",
+        json={"url": "https://youtu.be/x", "actor_id": aid, "voice_label": "Luffy"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["source_url"] == "https://youtu.be/x"
+
+    embs = api_client.get(f"/characters/{cid}").json()["embeddings"]
+    url_emb = [e for e in embs if e["audio_source"] == "dashboard-enroll-url"][0]
+    assert url_emb["source_url"] == "https://youtu.be/x"
+    assert url_emb["audio_path"]
+    assert api_client.get(f"/embeddings/{url_emb['id']}/audio").status_code == 200
+
+
 def test_character_404(api_client):
     assert api_client.get("/characters/999999").status_code == 404
     assert api_client.patch("/characters/999999", json={"occupation": "x"}).status_code == 404

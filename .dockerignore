@@ -22,3 +22,4 @@ benchmark/**/*.mp3
 benchmark/**/*.m4a
 models/
 *.log
+enroll_audio/

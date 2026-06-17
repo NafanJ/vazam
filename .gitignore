@@ -33,3 +33,6 @@ separated/
 # OS
 .DS_Store
 Thumbs.db
+
+# Stored enrolled-clip audio (local default dir; container uses a volume)
+enroll_audio/

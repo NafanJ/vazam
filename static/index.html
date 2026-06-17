@@ -298,6 +298,18 @@
       </div>
     </details>
 
+    <!-- FROM A LINK -->
+    <details id="urlWrap">
+      <summary>🔗 Identify / enroll from a YouTube link <span>⌄</span></summary>
+      <div class="body">
+        <div class="field"><label>Video / clip URL (single voice)</label><input type="text" id="urlInput" inputmode="url" placeholder="https://youtu.be/…"></div>
+        <button class="mini-btn" id="urlIdentifyBtn">Identify from link</button>
+        <div class="field" style="margin-top:4px"><label>…or add this link to a character's fingerprint</label><select id="urlEnrollSelect"><option value="">Loading voices…</option></select></div>
+        <button class="mini-btn ghost" id="urlEnrollBtn">Add link to fingerprint</button>
+        <div class="hero-sub" style="margin-top:2px">Downloads a short clip server-side — slower than an upload, and the link must be reachable.</div>
+      </div>
+    </details>
+
     <!-- BACKEND -->
     <details id="backendWrap">
       <summary>Backend URL <span>⌄</span></summary>
@@ -437,10 +449,14 @@ function clearClip(){
 
 /* ═══════════════ IDENTIFY ═══════════════ */
 function setBusy(on){
+  state.running = on;
   const b=$('#identifyBtn');
   b.disabled = on || !state.clip;
   b.textContent = on ? 'Identifying…' : 'Identify';
   b.classList.toggle('ready', !on && !!state.clip);
+  // a link request blocks (and is blocked by) the main flow too
+  const ub=$('#urlIdentifyBtn'), ueb=$('#urlEnrollBtn');
+  if(ub) ub.disabled=on; if(ueb) ueb.disabled=on;
 }
 async function identify(){
   if(!state.clip || state.running) return;     // ignore re-entry while one is in flight
@@ -594,6 +610,41 @@ async function enrollStaged(){
   }catch(e){ btn.textContent='✕ failed'; btn.disabled=false; }
 }
 
+/* ─── from a YouTube/clip link ─── */
+async function identifyUrl(){
+  const url=$('#urlInput').value.trim();
+  if(!url){ showError('Paste a link first.'); return; }
+  if(state.running) return;
+  setBusy(true);
+  $('#errBanner').classList.remove('show'); $('#results').innerHTML=''; state.lastResultMatch=null;
+  showProgress(true);
+  const stages=[state.isolate?'Downloading + isolating music/SFX…':'Downloading clip…','Embedding voiceprint…','Searching reference voices…','Verifying across sub-windows…'];
+  const timers=stages.map((s,i)=>setTimeout(()=>pushStage(s), i*900));
+  const t0=Date.now(); const el=setInterval(()=>$('#progElapsed').textContent=fmtTime((Date.now()-t0)/1000)+' elapsed · download can take a bit',300);
+  try{
+    const res=await call('/identify/url',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({url, isolate:state.isolate, show_id: state.showId? Number(state.showId): null})});
+    const data=await res.json();
+    timers.forEach(clearTimeout); clearInterval(el); finishStages(); showProgress(false); renderSingle(data.results||[]);
+  }catch(e){ timers.forEach(clearTimeout); clearInterval(el); showProgress(false); showError('Link identify failed — '+e.message); }
+  setBusy(false);
+}
+async function enrollUrl(){
+  const url=$('#urlInput').value.trim();
+  if(!url){ showError('Paste a link first.'); return; }
+  const opt=$('#urlEnrollSelect').selectedOptions[0];
+  if(!opt||!opt.value){ showError('Pick a character to add to.'); return; }
+  if(state.running) return;
+  const btn=$('#urlEnrollBtn'); const orig=btn.textContent; btn.textContent='Adding…'; setBusy(true);
+  try{
+    const res=await call('/enroll/url',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({url, actor_id:Number(opt.value), voice_label:opt.dataset.label||opt.textContent, isolate:state.isolate})});
+    const d=await res.json();
+    btn.textContent=`✓ Added — ${d.samples} clips`;
+  }catch(e){ btn.textContent=orig; showError('Link enroll failed — '+e.message); }
+  setBusy(false);
+}
+
 /* ─── progress helpers ─── */
 const stageEls=[];
 function showProgress(on){ $('#progress').classList.toggle('show',on); if(on){ $('#log').innerHTML=''; stageEls.length=0; $('#pbarFill').style.width='8%'; } }
@@ -618,6 +669,8 @@ $('#fileInput').onchange = e => { const f=e.target.files[0]; if(f) stageBlob(f, 
 $('#stagedClear').onclick = clearClip;
 $('#identifyBtn').onclick = identify;
 $('#enrollBtn').onclick = enrollStaged;
+$('#urlIdentifyBtn').onclick = identifyUrl;
+$('#urlEnrollBtn').onclick = enrollUrl;
 $('#mode').onclick = e => { const b=e.target.closest('button'); if(!b)return; $$('#mode button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); state.mode=b.dataset.mode; };
 $('#isolate').onclick = function(){ state.isolate=!state.isolate; this.classList.toggle('on',state.isolate); this.setAttribute('aria-pressed',state.isolate); };
 $('#showFilter').onchange = e => state.showId = e.target.value;
@@ -629,11 +682,13 @@ async function populate(){
   try{ let r=await call('/shows'); const shows=await r.json();
     shows.forEach(s=>{const o=document.createElement('option');o.value=s.id;o.textContent=s.title;$('#showFilter').appendChild(o);});
   }catch(e){}
-  // voices
+  // voices (populate both the staged-clip and the link enroll pickers)
   try{ let r=await call('/voices'); const v=await r.json();
-    $('#enrollSelect').innerHTML='<option value="">Choose a character…</option>';
-    v.forEach(x=>{const o=document.createElement('option');o.value=x.actor_id;o.dataset.label=x.voice_label;o.textContent=`${x.actor_name} — ${x.voice_label} (${x.samples})`;$('#enrollSelect').appendChild(o);});
-  }catch(e){ $('#enrollSelect').innerHTML='<option value="">No voices enrolled yet</option>'; }
+    const sels=[$('#enrollSelect'), $('#urlEnrollSelect')];
+    sels.forEach(s=>{ s.innerHTML='<option value="">Choose a character…</option>';
+      v.forEach(x=>{const o=document.createElement('option');o.value=x.actor_id;o.dataset.label=x.voice_label;o.textContent=`${x.actor_name} — ${x.voice_label} (${x.samples})`;s.appendChild(o);});
+    });
+  }catch(e){ $('#enrollSelect').innerHTML='<option value="">No voices enrolled yet</option>'; $('#urlEnrollSelect').innerHTML='<option value="">No voices enrolled yet</option>'; }
 }
 renderHistory(); populate();
 </script>

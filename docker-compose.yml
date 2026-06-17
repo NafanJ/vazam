@@ -19,11 +19,13 @@ services:
     environment:
       DEVICE: cpu
       DEMUCS_MODEL: htdemucs       # fast isolation on CPU
+      VAZAM_AUDIO_DIR: /data/enroll-audio   # stored enrolled clips (for playback)
       # HTTP Basic auth — gates every route except /health. Set in .env.
       VAZAM_AUTH_USER: ${VAZAM_AUTH_USER:-}
       VAZAM_AUTH_PASS: ${VAZAM_AUTH_PASS:-}
     volumes:
       - vazam-models:/models       # persistent model cache (~535 MB, downloads once)
+      - vazam-audio:/data/enroll-audio   # enrolled-clip audio, keyed by embedding id
     expose:
       - "8000"                     # internal only; cloudflared reaches it over the network
     networks:
@@ -37,6 +39,7 @@ services:
 
 volumes:
   vazam-models:
+  vazam-audio:
 
 networks:
   media-server_default:

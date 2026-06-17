@@ -21,6 +21,11 @@ RUN pip install --no-cache-dir torch==2.5.1 torchaudio==2.5.1 \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# JS runtime for yt-dlp's YouTube challenge solver (URL identify/enroll).
+# Kept in its own late layer so it doesn't invalidate the torch/pip cache.
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY . .
 
 # Cache models on a mountable volume; serve responsively on CPU.

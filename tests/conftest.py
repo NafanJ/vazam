@@ -9,6 +9,7 @@ by an in-memory fake (_FakeSupabase) so no network connection is needed.
 from __future__ import annotations
 
 import io
+import tempfile
 import wave
 from collections import defaultdict
 from typing import Any, Generator
@@ -304,6 +305,8 @@ def api_client() -> Generator[TestClient, None, None]:
             # auth middleware stays inert and the TestClient isn't gated with 401.
             "VAZAM_AUTH_USER": "",
             "VAZAM_AUTH_PASS": "",
+            # Enrolled-clip audio writes go to a throwaway dir, not the repo.
+            "VAZAM_AUDIO_DIR": tempfile.mkdtemp(prefix="vazam-audio-"),
         }),
     ):
         import importlib
