@@ -54,6 +54,11 @@
 
   .empty{text-align:center;color:var(--muted2);font-size:13px;padding:40px 0}
   .more{text-align:center;color:var(--muted2);font-size:12px;padding:16px 0}
+  .pager{display:flex;align-items:center;justify-content:center;gap:12px;padding:14px 0 6px}
+  .pager.hide{display:none}
+  .pager button{font-size:14px;color:var(--txt);background:var(--raise);border:1px solid var(--line);border-radius:9px;padding:8px 14px;min-width:80px}
+  .pager button:disabled{opacity:.4}
+  .pager .pginfo{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:120px;text-align:center}
 
   /* modal */
   .overlay{position:fixed;inset:0;background:rgba(4,4,8,.72);backdrop-filter:blur(4px);display:none;align-items:flex-end;justify-content:center;z-index:10}
@@ -111,6 +116,7 @@
     </div>
 
     <div class="list" id="list"></div>
+    <div class="pager" id="pager"></div>
   </div>
 
   <!-- DETAIL MODAL -->
@@ -121,12 +127,12 @@
 <script>
 "use strict";
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
-const CAP=400;
+const PAGE_SIZE=50;
 const api=()=>{ try{return (JSON.parse(localStorage.getItem('vazam_backend'))||'').replace(/\/$/,'')}catch(e){return ''} };
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const initial=n=>(n||'?').trim().charAt(0).toUpperCase()||'?';
 
-let ALL=[], voiceOnly=false, query='', sortMode='voiced';
+let ALL=[], voiceOnly=false, query='', sortMode='voiced', page=1;
 const SORTS={
   voiced:(a,b)=> (b.samples>0)-(a.samples>0) || String(a.name).localeCompare(b.name),
   clips :(a,b)=> (b.samples||0)-(a.samples||0) || String(a.name).localeCompare(b.name),
@@ -154,16 +160,34 @@ function match(c){
 }
 function render(){
   const filtered = ALL.filter(match).sort(SORTS[sortMode] || SORTS.voiced);
-  const slice = filtered.slice(0,CAP);
-  $('#shown').textContent = filtered.length ? `${Math.min(filtered.length,CAP)} of ${filtered.length}` : '';
-  if(!filtered.length){ $('#list').innerHTML=`<div class="empty">No characters match “${esc(query)}”.<br>Try a different name, actor, or show.</div>`; return; }
+  const total = filtered.length;
+  const pages = Math.max(1, Math.ceil(total/PAGE_SIZE));
+  if(page>pages) page=pages; if(page<1) page=1;
+  const start=(page-1)*PAGE_SIZE;
+  const slice = filtered.slice(start, start+PAGE_SIZE);
+
+  $('#shown').textContent = total ? `${start+1}–${start+slice.length} of ${total}` : '';
+  if(!total){ $('#list').innerHTML=`<div class="empty">No characters match “${esc(query)}”.<br>Try a different name, actor, or show.</div>`; renderPager(0,1); return; }
   $('#list').innerHTML = slice.map(c=>{
     const av = c.image_url? `<img src="${esc(c.image_url)}" alt="" loading="lazy">` : initial(c.name);
     const sub = [c.actor_name,c.show_title,c.occupation].filter(Boolean).map(esc).join(' · ');
     const badge = c.samples>0 ? `<span class="badge has">${c.samples} clip${c.samples>1?'s':''}</span>` : `<span class="badge no">no voice</span>`;
     return `<button class="row" data-id="${c.id}"><div class="av">${av}</div><div class="info"><div class="nm">${esc(c.name)}</div><div class="sub">${sub||'—'}</div></div>${badge}</button>`;
-  }).join('') + (filtered.length>CAP ? `<div class="more">Showing first ${CAP} — refine your search to see more.</div>` : '');
+  }).join('');
+  renderPager(total, pages);
 }
+function renderPager(total, pages){
+  const p=$('#pager');
+  if(total<=PAGE_SIZE){ p.className='pager hide'; p.innerHTML=''; return; }
+  p.className='pager';
+  p.innerHTML=`<button id="prevPg"${page<=1?' disabled':''}>← Prev</button>`+
+    `<span class="pginfo">Page ${page} of ${pages}</span>`+
+    `<button id="nextPg"${page>=pages?' disabled':''}>Next →</button>`;
+  $('#prevPg').onclick=()=>goPage(page-1);
+  $('#nextPg').onclick=()=>goPage(page+1);
+}
+function goPage(p){ page=p; render(); window.scrollTo({top:0,behavior:'smooth'}); }
+function resetPage(){ page=1; render(); }
 
 /* ─── detail modal ─── */
 async function openDetail(id){
@@ -218,9 +242,9 @@ function closeDetail(){ $('#overlay').classList.remove('show'); }
 
 /* ─── events ─── */
 $('#list').onclick=e=>{ const r=e.target.closest('.row'); if(r) openDetail(r.dataset.id); };
-$('#q').oninput=e=>{ query=e.target.value.trim().toLowerCase(); render(); };
-$('#voiceOnly').onclick=function(){ voiceOnly=!voiceOnly; this.classList.toggle('on',voiceOnly); this.setAttribute('aria-pressed',voiceOnly); render(); };
-$('#sortSel').onchange=function(){ sortMode=this.value; render(); };
+$('#q').oninput=e=>{ query=e.target.value.trim().toLowerCase(); resetPage(); };
+$('#voiceOnly').onclick=function(){ voiceOnly=!voiceOnly; this.classList.toggle('on',voiceOnly); this.setAttribute('aria-pressed',voiceOnly); resetPage(); };
+$('#sortSel').onchange=function(){ sortMode=this.value; resetPage(); };
 $('#overlay').onclick=e=>{ if(e.target===$('#overlay')) closeDetail(); };
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDetail(); });
 
