@@ -3,6 +3,39 @@
 *Snapshot: June 2026. Companion to [data-acquisition-plan.md](data-acquisition-plan.md).
 This is the "where were we?" doc — read this first when picking the project back up.*
 
+## Update — 17 June 2026 (read this first)
+
+Three things changed since the validation narrative below was written; the prose
+further down is kept as a historical record of how we got here, but where it
+conflicts with this block, **this block is current**:
+
+- **The DB is now character-voice-only.** All 8 "Natural Voice" consensus
+  embeddings were deleted. Supabase holds **20 embeddings**, every one a
+  per-character voice (`voice_label` = character, `character_id` linked). The
+  open-set "Natural Voice baseline" the narrative below leans on no longer exists
+  in the data — identification matches characters directly. (`db.add_embedding`
+  still *defaults* `voice_label="Natural Voice"`, but nothing in the live DB uses it.)
+- **There is now a web dashboard, and it's deployed live.** `static/index.html`
+  (record/upload → identify, with a "Correct?" enroll button and an "Incorrect?"
+  re-route button) and `static/characters.html` (browse/search 650+ characters,
+  edit image/occupation, view fingerprint sources), served by FastAPI at `GET /`
+  and `GET /characters.html`. It runs in a Docker container (`Dockerfile`,
+  `docker-compose.yml`) on the homelab, reachable from a phone over a Cloudflare
+  tunnel behind HTTP Basic auth. So the "no web frontend" claim below is obsolete.
+  The single-voice path uses plain `POST /identify` (not the NDJSON stream) so it
+  survives the tunnel; `/identify/stream` still exists but the dashboard no longer
+  uses it.
+- **Identification results now carry character art.** `match_embeddings()` was
+  extended (migration `003_match_embeddings_character_art.sql`) to also return
+  `character_id`, the character `image_url`, and `show_title`; these flow through
+  `IdentificationResult.to_dict()` so result cards render the character image and
+  show chip.
+
+The **Next steps** order below is unchanged: benchmark clips + `eval.py` (#2) is
+still the gate on everything, and threshold calibration (#3) is more pressing now
+that the user is actively enrolling phone-mic clips (growing N shifts impostor
+scores against the uncalibrated 0.70/0.50 bars).
+
 ## Where things stand
 
 The full accuracy roadmap from the scaling deep-dive is **built, tested, and pushed**
@@ -19,13 +52,17 @@ The full accuracy roadmap from the scaling deep-dive is **built, tested, and pus
 | App toolchain (install / lint / typecheck / test) | ✅ | `app/` configs |
 | CLAUDE.md matches reality | ✅ | repo root |
 
-**What the system is:** FastAPI backend (all the intelligence) + React Native mobile app.
-There is no web frontend, but the backend's Swagger UI at `http://localhost:8000/docs`
-is a full test surface — the app is not needed to exercise anything.
+**What the system is:** FastAPI backend (all the intelligence) + a self-contained
+web dashboard (`static/`, served at `GET /` — the primary way clips are recorded
+and enrolled from a phone; see the 17 June update above) + a React Native mobile
+app (source only — see caveat below). The backend's Swagger UI at
+`http://localhost:8000/docs` is also a full test surface.
 
 **Mobile app caveat:** `app/` has source, tests, and configs but **no `ios/` or
-`android/` native project folders** — it cannot be built onto a phone yet. Generating
-the native scaffolding is its own task (see below).
+`android/` native project folders** — the *native* app cannot be built onto a phone
+yet. Generating the native scaffolding is its own task (see below). In the meantime
+the web dashboard fills this role: it runs on a phone browser over the Cloudflare
+tunnel, so identifying/enrolling on the go already works without the native app.
 
 ## To run it (one-time setup)
 
@@ -63,8 +100,10 @@ the native scaffolding is its own task (see below).
 
 ## Live validation (June 2026) — proven end-to-end on real data
 
-The pipeline has now been run for real, not just unit-tested. Current Supabase
-project (`rpmcsbgtsvpoczpycozr`) holds **25 embeddings** across two shows: 8 consensus
+The pipeline has now been run for real, not just unit-tested. *(Counts below are as
+of the original run; the 8 Natural Voice embeddings have since been deleted — the DB
+is now 20 character-only embeddings. See the 17 June update at the top.)* The Supabase
+project (`rpmcsbgtsvpoczpycozr`) then held **25 embeddings** across two shows: 8 consensus
 "Natural Voice" (Steve Blum + 7 of 10 Attack on Titan main-cast seiyuu — Eren/Yuuki Kaji,
 Armin/Marina Inoue, Levi/Hiroshi Kamiya, Hange/Romi Park, Annie/Yuu Shimamura,
 Reiner/Yoshimasa Hosoya, Connie/Hiro Shimono; Erwin/Daisuke Ono, Jean/Kishou

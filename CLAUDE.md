@@ -44,12 +44,20 @@ vazam/
 ├── embed_batch.py     Bulk audio-to-embedding importer (CLI tool)
 ├── add_character_voice.py  Lazy per-character voice embedding ingestion (CLI tool)
 ├── requirements.txt   Python dependencies
+├── static/            Web dashboard (served by api.py — see Web Dashboard below)
+│   ├── index.html     Record/upload → identify; "Correct?"/"Incorrect?" enroll
+│   └── characters.html  Browse/search characters, edit image/occupation, view sources
+├── Dockerfile         CPU image (torch CPU wheels + ffmpeg); see Deployment below
+├── docker-compose.yml Own stack, joins existing cloudflared network (Cloudflare tunnel)
 ├── migrations/        SQL migrations (apply via Supabase SQL editor / db push)
-│   └── 001_embedding_quality.sql
+│   ├── 001_embedding_quality.sql
+│   ├── 002_character_occupation.sql
+│   └── 003_match_embeddings_character_art.sql
 ├── benchmark/         Labelled eval clips (audio gitignored; see its README
 │                      for the phone-mic recording protocol)
 ├── docs/
-│   └── data-acquisition-plan.md   Strategy for scaling voice-actor coverage
+│   ├── data-acquisition-plan.md   Strategy for scaling voice-actor coverage
+│   └── next-steps.md              "Where were we?" status doc — read on resume
 ├── tests/
 │   ├── conftest.py    Shared fixtures; in-memory fake Supabase + mocked ML
 │   ├── test_api.py    FastAPI endpoint integration tests
@@ -97,10 +105,12 @@ vazam_embeddings  — id, actor_id, character_id, voice_label (default "Natural 
                     source_url, duration_s, quality_score
 ```
 
-- Similarity search goes through the `match_embeddings(query_embedding, top_k, show_id_filter)` PostgreSQL function (pgvector `<=>` cosine distance), called via Supabase RPC.
+- Similarity search goes through the `match_embeddings(query_embedding, top_k, show_id_filter)` PostgreSQL function (pgvector `<=>` cosine distance), called via Supabase RPC. It returns `actor_id, actor_name, voice_label, similarity, character_id, image_url, show_title` (the last three were added by migration `003` so results carry character art + the show name).
 - Embeddings are stored as `vector(192)` (passed as Python lists, always L2-normalized float32).
 - `add_actor` / `add_show` / `add_character` are upserts on `anilist_id` — safe to re-run.
-- **Migrations:** the base schema and `match_embeddings()` were applied to Supabase manually, before `migrations/` existed. New schema changes live in `migrations/*.sql` and must be applied via the Supabase SQL editor (or `supabase db push`). `001_embedding_quality.sql` (source_url, duration_s, quality_score) is required — `db.add_embedding` always sends those columns.
+- **Migrations:** the base schema and `match_embeddings()` were applied to Supabase manually, before `migrations/` existed. New schema changes live in `migrations/*.sql` and must be applied via the Supabase SQL editor (or `supabase db push`). `001_embedding_quality.sql` (source_url, duration_s, quality_score) is required — `db.add_embedding` always sends those columns. `002_character_occupation.sql` adds `vazam_characters.occupation` (edited from the dashboard). `003_match_embeddings_character_art.sql` extends `match_embeddings()` to also return `character_id`, `image_url`, and `show_title` (drop+recreate — the return signature changed).
+
+- **Deployed DB is character-voice-only.** The "Natural Voice" consensus embeddings were deleted; every live embedding is a per-character voice (`voice_label` = character, `character_id` linked). `db.add_embedding` still defaults `voice_label="Natural Voice"`, but nothing in the live DB uses it. See `docs/next-steps.md` (17 June 2026 update).
 
 ## Development Setup
 
@@ -265,9 +275,17 @@ Interactive docs at `http://localhost:8000/docs` when the server is running.
 
 | Method | Path | Description |
 |--------|------|-------------|
+| `GET`  | `/` | Web dashboard (`static/index.html`); JSON API info if the file is absent |
+| `GET`  | `/characters.html` | Character admin page (`static/characters.html`) |
 | `POST` | `/identify` | Upload audio → top-K matches (params: `isolate`, `show_id`, `top_k`, `verify`) |
+| `POST` | `/identify/stream` | Same as `/identify` but streams NDJSON progress stages then the result. Exists for API users; the dashboard now uses plain `/identify` (survives the Cloudflare tunnel better) |
 | `POST` | `/identify/multi` | Diarize + identify each speaker separately (requires `HF_TOKEN`) |
 | `POST` | `/identify/show` | Infer the show from cast co-occurrence, then identify each speaker within it |
+| `POST` | `/enroll` | Add an uploaded clip to a character's fingerprint (`actor_id`, `voice_label`, `isolate`) — powers the dashboard "Correct?/Incorrect?" buttons |
+| `GET`  | `/voices` | Distinct stored voices (actor + `voice_label` + sample counts) for the enroll picker |
+| `GET`  | `/characters` | All characters with `actor_name`, `show_title`, `image_url`, `occupation`, `samples` |
+| `GET`  | `/characters/{id}` | One character + its embedding sources |
+| `PATCH`| `/characters/{id}` | Edit `image_url` / `occupation` (from the admin page) |
 | `POST` | `/actors` | Register a voice actor |
 | `GET`  | `/actors` | List all actors (supports `limit`, `offset`) |
 | `GET`  | `/actors/{id}` | Actor profile + filmography |
@@ -279,7 +297,20 @@ Interactive docs at `http://localhost:8000/docs` when the server is running.
 | `POST` | `/index/rebuild` | No-op kept for compatibility (pgvector self-manages) |
 | `GET`  | `/health` | Liveness check + embedding count |
 
-Identification responses include `confidence`, `window_agreement`, and `match_level` (`confident` / `possible` / `none`). `/identify/show` responses include `show` (`null` when no cast consensus) with `speakers_matched` / `speakers_total`.
+Identification responses include `confidence`, `window_agreement`, `match_level` (`confident` / `possible` / `none`), and (since migration `003`) `character_id`, `image_url`, and `show_title`. `/identify/show` responses include `show` (`null` when no cast consensus) with `speakers_matched` / `speakers_total`.
+
+## Web Dashboard (`static/`)
+
+Two **self-contained** vanilla HTML/CSS/JS files (no build, no npm, no CDN) served by `api.py`. This is the primary way clips are recorded and enrolled from a phone.
+
+- **`static/index.html`** (`GET /`) — record (MediaRecorder) or upload a clip → decode to 16 kHz mono 16-bit WAV client-side (`blobToWav16k`, 20s cap) → **plain `POST /identify`** (single voice) or `POST /identify/show` (scene mode). Pipeline stages are simulated client-side during the request. A `state.running` flag blocks double-submit. Result cards render character art (`image_url`) + show chip, a match-level pill, and two enroll actions: **"Correct?"** (add the clip to the matched character via `POST /enroll`) and **"Incorrect?"** (open the picker to route it to the right character).
+- **`static/characters.html`** (`GET /characters.html`) — browse/search 650+ characters (voiced first), edit `image_url` / `occupation` (`PATCH /characters/{id}`), and view each fingerprint's embedding sources.
+
+Both strip the design-bundle MOCK fallback so failed requests surface real errors. The React Native `app/` is separate and not built onto a phone yet — the dashboard fills that role.
+
+## Deployment (Docker + Cloudflare Tunnel)
+
+`Dockerfile` builds a CPU image (torch CPU wheels + ffmpeg/libsndfile, `DEVICE=cpu`, `DEMUCS_MODEL=htdemucs`, models cached in a `/models` volume). `docker-compose.yml` runs it as its **own stack** that joins the existing `media-server_default` network so a dashboard-managed **cloudflared** container reaches it at `http://vazam:8000`; a Cloudflare Public Hostname publishes it. Every route except `/health` is gated by **HTTP Basic auth** (`VAZAM_AUTH_USER` / `VAZAM_AUTH_PASS`). Deployed copy lives at `/opt/vazam` (an rsync copy, not a git clone): sync changed files there, then `docker compose build && docker compose up -d` (heavy layers cache; only `COPY . .` onward rebuilds). Secrets come from a `.env` next to the compose file (gitignored).
 
 ## Testing Patterns
 
@@ -347,7 +378,7 @@ with (
 
 ### Multi-embedding per voice style
 
-Each voice actor stores **separate embeddings per voice style** (`voice_label` on `vazam_embeddings`): "Natural Voice" (interviews, panels — the consensus scraper's output) plus optional per-character voices. This matters for actors who substantially alter their voice between roles (e.g., Seth MacFarlane as Peter vs. Stewie Griffin). Per-character embeddings are added lazily and selectively, never in bulk.
+The `voice_label` column lets an actor hold **separate embeddings per voice style** — "Natural Voice" (interviews/panels, the consensus scraper's output) and/or per-character voices — which matters for actors who substantially alter their voice between roles (e.g., Seth MacFarlane as Peter vs. Stewie Griffin). Per-character embeddings are added lazily and selectively, never in bulk. **Current live DB:** all "Natural Voice" embeddings were deleted; it is now character-voice-only (every embedding has `voice_label` = character + a linked `character_id`). The dual-style mechanism still exists in code for actors who'd benefit from a natural-voice anchor.
 
 ### Show-aware search
 
