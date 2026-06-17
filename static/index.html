@@ -302,10 +302,11 @@
     <details id="enrollWrap">
       <summary>➕ Add staged clip to a character's fingerprint <span>⌄</span></summary>
       <div class="body">
-        <div class="field"><label>Character</label><select id="enrollSelect"><option value="">Loading voices…</option></select></div>
+        <div class="field"><label>Character</label><input id="enrollSelect" list="charlist" autocomplete="off" placeholder="search any character…"></div>
         <button class="mini-btn" id="enrollBtn" disabled>Add clip</button>
       </div>
     </details>
+    <datalist id="charlist"></datalist>
 
     <!-- FROM A LINK -->
     <details id="urlWrap">
@@ -321,7 +322,7 @@
             <div class="trimsel"><span id="selLbl">0.0 – 0.0s</span><button class="tplay" id="playSel">▶ selection</button></div>
           </div>
           <button class="mini-btn" id="urlIdentifyBtn">Identify selection</button>
-          <div class="field" style="margin-top:8px"><label>…or add the selection to a character's fingerprint</label><select id="urlEnrollSelect"><option value="">Loading voices…</option></select></div>
+          <div class="field" style="margin-top:8px"><label>…or add the selection to a character's fingerprint</label><input id="urlEnrollSelect" list="charlist" autocomplete="off" placeholder="search any character…"></div>
           <button class="mini-btn ghost" id="urlEnrollBtn">Add selection to fingerprint</button>
         </div>
         <div class="hero-sub" style="margin-top:6px">Downloads up to ~4 min server-side — play it, drag the handles to the voice you want, then identify/enroll just that selection (uses up to 30s of it).</div>
@@ -602,9 +603,10 @@ async function enrollTopResult(top){
   try{
     const fd=new FormData(); fd.append('audio',state.clip.blob,'clip.wav');
     fd.append('actor_id',top.actor_id); fd.append('voice_label',top.character_name); fd.append('isolate',String(state.isolate));
+    if(top.character_id!=null) fd.append('character_id',top.character_id);
     let res=await call('/enroll',{method:'POST',body:fd});
     const d = await res.json();
-    btn.classList.add('done'); btn.textContent=`✓ Added — ${d.samples} clips`;
+    btn.classList.add('done'); btn.textContent=`✓ Added — ${d.samples} clips`; loadCharacters();
   }catch(e){ btn.textContent='✕ '+e.message; }
 }
 /* Wrong match: open the enrollment picker so the staged clip can be routed to
@@ -616,14 +618,16 @@ function markIncorrect(){
   $('#enrollSelect').focus();
 }
 async function enrollStaged(){
-  if(!state.clip) return; const sel=$('#enrollSelect'); const opt=sel.selectedOptions[0]; if(!opt||!opt.value) return;
+  if(!state.clip) return;
+  const c=resolveChar('#enrollSelect');
+  if(!c){ showError('Pick a character from the list.'); return; }
   const btn=$('#enrollBtn'); btn.textContent='Adding…'; btn.disabled=true;
   try{
     const fd=new FormData(); fd.append('audio',state.clip.blob,'clip.wav');
-    fd.append('actor_id',opt.value); fd.append('voice_label',opt.dataset.label||opt.textContent); fd.append('isolate',String(state.isolate));
+    fd.append('actor_id',c.actor_id); fd.append('voice_label',c.voice_label); fd.append('character_id',c.character_id); fd.append('isolate',String(state.isolate));
     let res=await call('/enroll',{method:'POST',body:fd});
     const d=await res.json();
-    btn.textContent=`✓ Added — ${d.samples} clips`;
+    btn.textContent=`✓ Added — ${d.samples} clips`; loadCharacters();
   }catch(e){ btn.textContent='✕ failed'; btn.disabled=false; }
 }
 
@@ -681,15 +685,15 @@ async function identifySelection(){
 }
 async function enrollSelection(){
   if(!clipBuf){ showError('Load a clip first.'); return; }
-  const opt=$('#urlEnrollSelect').selectedOptions[0];
-  if(!opt||!opt.value){ showError('Pick a character to add to.'); return; }
+  const c=resolveChar('#urlEnrollSelect');
+  if(!c){ showError('Pick a character from the list.'); return; }
   if(state.running) return;
   const btn=$('#urlEnrollBtn'); const orig=btn.textContent; btn.textContent='Adding…'; setBusy(true);
   try{
     const fd=new FormData(); fd.append('audio', await renderSelectionWav(), 'clip.wav');
-    fd.append('actor_id', opt.value); fd.append('voice_label', opt.dataset.label||opt.textContent); fd.append('isolate', String(state.isolate));
+    fd.append('actor_id', c.actor_id); fd.append('voice_label', c.voice_label); fd.append('character_id', c.character_id); fd.append('isolate', String(state.isolate));
     const res=await call('/enroll',{method:'POST',body:fd}); const d=await res.json();
-    btn.textContent=`✓ Added — ${d.samples} clips`;
+    btn.textContent=`✓ Added — ${d.samples} clips`; loadCharacters();
   }catch(e){ btn.textContent=orig; showError('Enroll failed — '+e.message); }
   setBusy(false);
 }
@@ -732,18 +736,29 @@ $('#showFilter').onchange = e => state.showId = e.target.value;
 $('#backendUrl').value = load('vazam_backend','') || '';
 $('#backendUrl').onchange = e => save('vazam_backend', e.target.value);
 
+let charMap={};   // datalist value string → {character_id, actor_id, voice_label}
+async function loadCharacters(){
+  try{
+    const res=await call('/characters'); const chars=await res.json();
+    const dl=$('#charlist'); dl.innerHTML=''; charMap={};
+    chars.filter(c=>c.actor_id)
+      .sort((a,b)=> (b.samples>0)-(a.samples>0) || String(a.name).localeCompare(b.name))
+      .forEach(c=>{
+        const tail=c.samples? ` · ${c.samples} clip${c.samples>1?'s':''}` : ' · no clips';
+        const val=`${c.name} — ${c.actor_name||'?'}${c.show_title?` (${c.show_title})`:''}${tail}`;
+        charMap[val]={character_id:c.id, actor_id:c.actor_id, voice_label:c.name};
+        const o=document.createElement('option'); o.value=val; dl.appendChild(o);
+      });
+  }catch(e){ /* leave datalist empty */ }
+}
+function resolveChar(inputId){ return charMap[$(inputId).value.trim()] || null; }
+
 async function populate(){
   // shows
   try{ let r=await call('/shows'); const shows=await r.json();
     shows.forEach(s=>{const o=document.createElement('option');o.value=s.id;o.textContent=s.title;$('#showFilter').appendChild(o);});
   }catch(e){}
-  // voices (populate both the staged-clip and the link enroll pickers)
-  try{ let r=await call('/voices'); const v=await r.json();
-    const sels=[$('#enrollSelect'), $('#urlEnrollSelect')];
-    sels.forEach(s=>{ s.innerHTML='<option value="">Choose a character…</option>';
-      v.forEach(x=>{const o=document.createElement('option');o.value=x.actor_id;o.dataset.label=x.voice_label;o.textContent=`${x.actor_name} — ${x.voice_label} (${x.samples})`;s.appendChild(o);});
-    });
-  }catch(e){ $('#enrollSelect').innerHTML='<option value="">No voices enrolled yet</option>'; $('#urlEnrollSelect').innerHTML='<option value="">No voices enrolled yet</option>'; }
+  loadCharacters();   // fills the shared #charlist for both enroll pickers
 }
 renderHistory(); populate();
 </script>

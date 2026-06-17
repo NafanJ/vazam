@@ -80,6 +80,27 @@ def test_enroll_unknown_actor_404(api_client):
     assert resp.status_code == 404
 
 
+def test_enroll_links_character_with_no_prior_clips(api_client):
+    import api
+    actor_id = api.db.add_actor("Daisuke Ono", anilist_id=50)
+    show_id = api.db.add_show("Attack on Titan", anilist_id=51)
+    cid = api.db.add_character("Erwin Smith", show_id, actor_id, anilist_id=52)
+    # No embeddings yet — the only way to link is an explicit character_id.
+    assert api_client.get(f"/characters/{cid}").json()["embeddings"] == []
+
+    resp = api_client.post(
+        "/enroll",
+        files={"audio": ("e.wav", make_wav_bytes(), "audio/wav")},
+        data={"actor_id": str(actor_id), "voice_label": "Erwin Smith",
+              "character_id": str(cid), "isolate": "false"},
+    )
+    assert resp.status_code == 200
+
+    embs = api_client.get(f"/characters/{cid}").json()["embeddings"]
+    assert len(embs) == 1
+    assert embs[0]["voice_label"] == "Erwin Smith"
+
+
 def test_characters_list_and_update(api_client):
     import api
     actor_id = api.db.add_actor("Mayumi Tanaka", anilist_id=1)

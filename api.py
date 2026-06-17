@@ -451,19 +451,23 @@ async def enroll(
     actor_id: int = Form(..., description="Actor who voices the character"),
     voice_label: str = Form(..., description="Character / voice label to add to"),
     isolate: bool = Form(True, description="Run Demucs vocal isolation first"),
+    character_id: Optional[int] = Form(None, description="Link to this character (lets you enroll a character with no clips yet)"),
 ):
     """Add a recording to a character's voice fingerprint (enrollment).
 
     Embeds the clip and stores it as an additional reference for this
-    actor+voice, linked to the same character as the existing fingerprint.
+    actor+voice. Pass `character_id` to link it to a specific character
+    (required to start a character that has no clips yet); otherwise it inherits
+    the character of an existing voice with the same actor + label.
     Phone-mic recordings are ideal here — they match real query conditions.
     """
     actor = db.get_actor(actor_id)
     if not actor:
         raise HTTPException(404, f"Actor {actor_id} not found")
 
-    existing = db.find_voice(actor_id, voice_label)
-    character_id = existing["character_id"] if existing else None
+    if character_id is None:
+        existing = db.find_voice(actor_id, voice_label)
+        character_id = existing["character_id"] if existing else None
 
     path = await _save_upload(audio)
     try:
@@ -519,6 +523,7 @@ class UrlEnroll(BaseModel):
     actor_id: int
     voice_label: str
     isolate: bool = True
+    character_id: Optional[int] = None
 
 
 @app.post("/enroll/url", tags=["Identification"])
@@ -526,15 +531,18 @@ def enroll_url(body: UrlEnroll):
     """Add a clip from a YouTube (or other) URL to a character's fingerprint.
 
     Downloads a short clip server-side (first ~60s), embeds it, and stores it as
-    an additional reference — the same as /enroll but sourced from a link. The
-    URL is kept as the clip's source for provenance.
+    an additional reference — the same as /enroll but sourced from a link. Pass
+    `character_id` to link a character that has no clips yet. The URL is kept as
+    the clip's source for provenance.
     """
     actor = db.get_actor(body.actor_id)
     if not actor:
         raise HTTPException(404, f"Actor {body.actor_id} not found")
 
-    existing = db.find_voice(body.actor_id, body.voice_label)
-    character_id = existing["character_id"] if existing else None
+    character_id = body.character_id
+    if character_id is None:
+        existing = db.find_voice(body.actor_id, body.voice_label)
+        character_id = existing["character_id"] if existing else None
 
     import tempfile
 
