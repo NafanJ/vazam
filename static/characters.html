@@ -79,7 +79,12 @@
   .src .l a{color:var(--accent2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .src .meta{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
   .src .v{color:var(--good)} .src .uv{color:var(--muted2)}
+  .src .r{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .srcdel{color:var(--muted2);background:none;border:none;font-size:14px;line-height:1;cursor:pointer;padding:3px 5px;border-radius:7px}
+  .srcdel:hover{color:#ff6b6b;background:rgba(255,59,84,.12)}
+  .srcdel:disabled{opacity:.5;cursor:default}
   .src-empty{font-size:12.5px;color:var(--muted2);margin-top:8px}
+  .src-note{font-size:11px;color:var(--muted2);margin-top:9px;line-height:1.5}
   @keyframes rise{from{transform:translateY(24px);opacity:.4}to{transform:translateY(0);opacity:1}}
   @media (prefers-reduced-motion:reduce){.modal{animation:none}}
 </style>
@@ -181,10 +186,11 @@ async function openDetail(id){
       <div class="src-ttl">Voice sources · ${emb.length} clip${emb.length===1?'':'s'}</div>
       ${emb.length? emb.map(e=>`<div class="src">
           <div class="l"><span class="${e.verified?'v':'uv'}">${e.verified?'✓':'○'}</span>
-            ${e.source_url?`<a href="${esc(e.source_url)}" target="_blank" rel="noopener">${esc(e.voice_label||e.audio_source||'clip')}</a>`:`<span>${esc(e.voice_label||e.audio_source||'clip')}</span>`}
+            ${e.source_url?`<a href="${esc(e.source_url)}" target="_blank" rel="noopener">▶ ${esc(e.voice_label||e.audio_source||'clip')}</a>`:`<span>${esc(e.voice_label||e.audio_source||'clip')}</span>`}
             <span style="color:var(--muted2)">· ${esc(e.audio_source||'')}</span></div>
-          <div class="meta">${e.duration_s!=null?(+e.duration_s).toFixed(1)+'s':''}${e.quality_score!=null?' · q '+(+e.quality_score).toFixed(2):''}</div>
-        </div>`).join('') : `<div class="src-empty">No voice fingerprint yet — record a clip on the dashboard and enroll it.</div>`}
+          <div class="r"><span class="meta">${e.duration_s!=null?(+e.duration_s).toFixed(1)+'s':''}${e.quality_score!=null?' · q '+(+e.quality_score).toFixed(2):''}</span>
+            <button class="srcdel" data-eid="${e.id}" title="Remove this clip from the fingerprint">🗑</button></div>
+        </div>`).join('') + `<div class="src-note">▶ opens the original source clip — the audio itself isn't stored. Deleting a clip updates the fingerprint immediately.</div>` : `<div class="src-empty">No voice fingerprint yet — record a clip on the dashboard and enroll it.</div>`}
     </div>`;
   $('#mClose').onclick=closeDetail;
   $('#mSave').onclick=async function(){
@@ -197,6 +203,15 @@ async function openDetail(id){
     if(idx>=0){ ALL[idx].image_url=body.image_url; ALL[idx].occupation=body.occupation; }
     btn.classList.add('done'); btn.textContent='✓ Saved'; render();
   };
+  $$('.srcdel', modal).forEach(b=> b.onclick=async function(){
+    if(!confirm(`Remove this clip from ${c.name}'s fingerprint? This can't be undone.`)) return;
+    this.disabled=true; this.textContent='…';
+    try{ await call('/embeddings/'+this.dataset.eid, {method:'DELETE'}); }
+    catch(err){ this.disabled=false; this.textContent='🗑'; alert('Delete failed: '+err.message); return; }
+    const idx=ALL.findIndex(x=>String(x.id)===String(id));
+    if(idx>=0 && ALL[idx].samples>0){ ALL[idx].samples-=1; render(); }
+    openDetail(id);   // refresh sources list + clip count
+  });
 }
 function closeDetail(){ $('#overlay').classList.remove('show'); }
 

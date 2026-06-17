@@ -123,6 +123,25 @@ def test_character_detail_lists_embedding_sources(api_client, random_embedding):
     assert detail["embeddings"][0]["voice_label"] == "Zoro"
 
 
+def test_delete_embedding_removes_from_fingerprint(api_client, random_embedding):
+    import api
+    actor_id = api.db.add_actor("Kappei Yamaguchi", anilist_id=20)
+    show_id = api.db.add_show("One Piece", anilist_id=21)
+    cid = api.db.add_character("Usopp", show_id, actor_id, anilist_id=22)
+    emb_id = api.db.add_embedding(
+        actor_id, random_embedding, character_id=cid, voice_label="Usopp",
+    )
+    assert len(api_client.get(f"/characters/{cid}").json()["embeddings"]) == 1
+
+    resp = api_client.delete(f"/embeddings/{emb_id}")
+    assert resp.status_code == 200
+    assert resp.json()["deleted"] == emb_id
+
+    assert api_client.get(f"/characters/{cid}").json()["embeddings"] == []
+    # Deleting again is a 404
+    assert api_client.delete(f"/embeddings/{emb_id}").status_code == 404
+
+
 def test_character_404(api_client):
     assert api_client.get("/characters/999999").status_code == 404
     assert api_client.patch("/characters/999999", json={"occupation": "x"}).status_code == 404

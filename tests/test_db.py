@@ -156,6 +156,17 @@ def test_add_multiple_embeddings(db: VazamDB):
     assert db.get_embedding_count() == 3
 
 
+def test_delete_embedding(db: VazamDB, random_embedding: np.ndarray):
+    actor_id = db.add_actor("Steve Blum")
+    emb_id = db.add_embedding(actor_id, random_embedding, voice_label="Spike Spiegel")
+    assert db.get_embedding_count() == 1
+
+    assert db.delete_embedding(emb_id) is True
+    assert db.get_embedding_count() == 0
+    # Deleting a missing id reports False (no row removed)
+    assert db.delete_embedding(emb_id) is False
+
+
 def test_add_embedding_with_quality_metadata(db: VazamDB, random_embedding: np.ndarray):
     actor_id = db.add_actor("Steve Blum")
     emb_id = db.add_embedding(

@@ -424,6 +424,14 @@ async def enroll(
     return {"ok": True, "actor_name": actor["name"], "voice_label": voice_label, "samples": samples}
 
 
+@app.delete("/embeddings/{embedding_id}", tags=["Identification"])
+def delete_embedding(embedding_id: int):
+    """Remove one embedding (a single clip) from a character's fingerprint."""
+    if not db.delete_embedding(embedding_id):
+        raise HTTPException(404, f"Embedding {embedding_id} not found")
+    return {"ok": True, "deleted": embedding_id}
+
+
 # ── Routes: characters ────────────────────────────────────────────────────────
 
 class CharacterUpdate(BaseModel):

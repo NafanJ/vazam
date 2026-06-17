@@ -363,6 +363,16 @@ class VazamDB:
         )
         return result.count or 0
 
+    def delete_embedding(self, embedding_id: int) -> bool:
+        """Delete one embedding (a fingerprint reference). True if it existed."""
+        res = (
+            self._client.table("vazam_embeddings")
+            .delete()
+            .eq("id", embedding_id)
+            .execute()
+        )
+        return bool(res.data)
+
     def list_voices(self) -> list[dict]:
         """Distinct stored voices (actor + voice_label) with sample counts.
 
