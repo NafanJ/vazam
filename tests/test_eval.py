@@ -8,20 +8,27 @@ network, no real audio decoding.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from eval import (
+    ClipRecord,
     EvalClip,
     ModeOutcome,
+    NegativeRecord,
     build_report,
     discover_clips,
+    discover_negatives,
+    positive_match_scores,
     rank_of,
     resolve_actor_ids,
     resolve_show_ids,
     run_eval,
+    run_negatives,
     summarize,
+    summarize_negatives,
 )
 from pipeline import IdentificationResult
 
@@ -193,3 +200,107 @@ def test_build_report_shape(db):
     assert report["per_show"]["Cowboy Bebop"]["global"]["clips"] == 1
     assert report["args"] == {"verify": True}
     assert report["embedding_count"] == 0
+    # negatives section is present and empty when none were supplied
+    assert report["negatives"] == {"clips": 0, "errors": 0, "scored": 0}
+    assert report["calibration"]["negative_top_scores"]["n"] == 0
+
+
+# ── Negatives (specificity) ───────────────────────────────────────────────────
+
+def test_discover_clips_skips_negatives_dir(tmp_path):
+    _touch(tmp_path / "Cowboy Bebop" / "Steve Blum" / "clip01.wav")
+    _touch(tmp_path / "_negatives" / "noise" / "n.wav")
+    _touch(tmp_path / ".hidden" / "Actor" / "x.wav")
+
+    clips = discover_clips(str(tmp_path))
+    assert len(clips) == 1
+    assert clips[0].show_title == "Cowboy Bebop"
+
+
+def test_discover_negatives_categories(tmp_path):
+    _touch(tmp_path / "_negatives" / "noise" / "a.wav")
+    _touch(tmp_path / "_negatives" / "noise" / "b.mp3")
+    _touch(tmp_path / "_negatives" / "unknown_voices" / "c.m4a")
+    _touch(tmp_path / "_negatives" / "flat.wav")          # directly in _negatives/
+    _touch(tmp_path / "_negatives" / "noise" / "notes.txt")  # non-audio, ignored
+
+    found = discover_negatives(str(tmp_path))
+    by_name = {Path(p).name: cat for p, cat in found}
+    assert by_name == {
+        "a.wav": "noise", "b.mp3": "noise",
+        "c.m4a": "unknown_voices", "flat.wav": "(root)",
+    }
+
+
+def test_discover_negatives_absent(tmp_path):
+    assert discover_negatives(str(tmp_path)) == []
+
+
+def test_summarize_negatives_overall_and_per_category():
+    recs = [
+        NegativeRecord("a.wav", "noise", 0.81, "confident", "X as Y"),
+        NegativeRecord("b.mp3", "noise", 0.55, "possible", "X as Y"),
+        NegativeRecord("c.m4a", "unknown_voices", 0.40, "none", "X as Y"),
+        NegativeRecord("d.wav", "(root)", None, "error", "boom"),
+    ]
+    s = summarize_negatives(recs)
+    assert s["clips"] == 4 and s["errors"] == 1 and s["scored"] == 3
+    assert s["confident_fp"] == 1 and s["claimed_fp"] == 2   # confident + possible
+    assert s["score_max"] == 0.81
+    assert s["by_category"]["noise"]["confident_fp"] == 1
+    assert s["by_category"]["noise"]["clips"] == 2
+    assert s["by_category"]["unknown_voices"]["claimed_fp"] == 0
+
+
+def test_summarize_negatives_all_errors():
+    recs = [NegativeRecord("a.wav", "noise", None, "error", "boom")]
+    s = summarize_negatives(recs)
+    assert s == {"clips": 1, "errors": 1, "scored": 0}
+
+
+def test_run_negatives_records_top_match():
+    fake_pipeline = MagicMock()
+    # first clip → confident match; second clip → identify raises
+    fake_pipeline.identify.side_effect = [
+        [_result(7, confidence=0.9)],
+        RuntimeError("decode error"),
+    ]
+    negs = [("/n/a.wav", "noise"), ("/n/b.wav", "noise")]
+    recs = run_negatives(fake_pipeline, negs)
+
+    assert len(recs) == 2
+    assert recs[0].top1_level == "confident" and recs[0].top1_confidence == 0.9
+    assert "Actor 7" in recs[0].top1_label
+    assert recs[1].top1_level == "error"
+
+
+def _clip_record(truth_id, outcome):
+    return ClipRecord(EvalClip("/f.wav", "A", "S"), truth_id, outcome, None)
+
+
+def test_positive_match_scores_only_counts_rank1():
+    records = [
+        # true actor (1) won rank 1 → score counts
+        _clip_record(1, ModeOutcome([1, 2], top1_confident=True, top1_confidence=0.7)),
+        # true actor (1) lost to actor 9 → not counted
+        _clip_record(1, ModeOutcome([9, 1], top1_confident=True, top1_confidence=0.8)),
+    ]
+    assert positive_match_scores(records) == [0.7]
+
+
+def test_build_report_includes_negatives_and_calibration(db):
+    blum_id = db.add_actor("Steve Blum")
+    clips = [EvalClip("/fake/clip.wav", "Steve Blum", "Nowhere")]
+    fake_pipeline = MagicMock()
+    fake_pipeline.identify.return_value = [_result(blum_id, confidence=0.66)]
+    run = run_eval(fake_pipeline, db, clips)
+
+    neg = [NegativeRecord("x.wav", "noise", 0.81, "confident", "Z as W")]
+    report = build_report(run, {"verify": True}, neg_records=neg)
+
+    assert report["negatives"]["confident_fp"] == 1
+    assert report["negatives_detail"][0]["matched"] == "Z as W"
+    cal = report["calibration"]
+    assert cal["positive_correct_scores"] == {"n": 1, "min": 0.66, "mean": 0.66}
+    assert cal["negative_top_scores"]["max"] == 0.81
+    assert cal["confident_threshold"] and cal["possible_threshold"]

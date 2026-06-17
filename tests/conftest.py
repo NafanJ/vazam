@@ -299,6 +299,11 @@ def api_client() -> Generator[TestClient, None, None]:
             "SUPABASE_URL": "http://test",
             "SUPABASE_KEY": "test",
             "HF_TOKEN": "",
+            # Keep the suite hermetic against a dev/deploy .env: with these empty,
+            # api.py's load_dotenv(override=False) can't re-enable Basic auth, so the
+            # auth middleware stays inert and the TestClient isn't gated with 401.
+            "VAZAM_AUTH_USER": "",
+            "VAZAM_AUTH_PASS": "",
         }),
     ):
         import importlib

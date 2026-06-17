@@ -16,7 +16,32 @@ benchmark/
 ```
 
 Matching is case-insensitive but otherwise exact. `eval.py` prints any
-folder names it can't resolve against the DB.
+folder names it can't resolve against the DB. Folders are keyed by the
+**actor (seiyuu)** name, not the character.
+
+The scaffold for the currently-logged cast is already created (drop clips
+straight in):
+
+```
+benchmark/
+├── Attack on Titan/
+│   ├── Yuuki Kaji/      (Eren)     ├── Hiro Shimono/  (Connie)
+│   ├── Hiroshi Kamiya/  (Levi)     ├── Daisuke Ono/   (Erwin)
+│   ├── Yui Ishikawa/    (Mikasa)   └── Romi Park/     (Hange)
+│   └── Yuu Shimamura/   (Annie)
+└── ONE PIECE/
+    ├── Mayumi Tanaka/   (Luffy)    ├── Kazuya Nakai/      (Zoro)
+    ├── Akemi Okamura/   (Nami)     ├── Kappei Yamaguchi/  (Usopp)
+    ├── Hiroaki Hirata/  (Sanji)    ├── Ikue Ootani/       (Chopper)
+    ├── Yuriko Yamaguchi/(Robin)    ├── Kazuki Yao/        (Franky)
+    └── Katsuhisa Houki/ (Jinbe)    └── Choo/              (Brook)
+```
+
+Aim for ~2–4 clips per character (one each makes every number a coin-flip).
+Use **held-out** scenes — don't reuse the clips/sources the fingerprints were
+enrolled from. For taciturn/ensemble characters (Connie, Annie, Hange, Jinbe,
+Robin) pick a *dialogue* scene where they clearly dominate the window, or
+`identify()` locks onto the co-star.
 
 ## Recording protocol — read this before recording
 
@@ -37,15 +62,39 @@ Per clip:
   dialogue-only, different episodes if possible.
 - Any of: `.wav` `.mp3` `.m4a` `.flac` `.ogg`
 
-Aim for **~20 clips per show across 3–5 shows** whose casts are already
-embedded in the DB.
+Aim for **~20 clips per show** whose cast is already embedded in the DB.
+
+## Negatives (specificity) — `_negatives/`
+
+Positives measure "did we find the right actor." Negatives measure the other
+half: **does the system stay quiet when no one in the DB is speaking?** That's
+what the `0.70` / `0.50` thresholds protect, and they're currently uncalibrated
+guesses — negatives are the data that calibrates them.
+
+Put clips that should match **nobody** under `benchmark/_negatives/`, organized
+into subfolders for a per-category breakdown (these are pre-created):
+
+```
+benchmark/_negatives/
+├── noise/            ← traffic, music, room tone, TV static (no speech)
+└── unknown_voices/   ← real voices NOT in the DB: other anime, a podcast
+                         host, an English dub, you talking — the harder test
+```
+
+`eval.py` runs each through `identify()` and reports the **false-positive rate**
+(how often a negative produced a confident/possible claim — want ~0) plus the
+score gap between correct positive matches and negative top-scores. The
+threshold belongs in that gap. ~5–10 clips per category is plenty. The
+`_negatives/` folder is skipped by positive discovery (its `_` prefix).
 
 ## Running
 
 ```bash
-python eval.py benchmark/
+python eval.py benchmark/                            # positives + negatives
 python eval.py benchmark/ --json runs/$(date +%Y%m%d).json   # track over time
+python eval.py benchmark/ --no-negatives             # positives only
 ```
 
 Audio files in this directory are for local evaluation only — don't commit
-them (see .gitignore).
+them (see .gitignore); the folder scaffold (`.gitkeep` files) is committed so
+the structure persists.
