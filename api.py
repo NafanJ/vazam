@@ -611,17 +611,24 @@ class CharacterUpdate(BaseModel):
 
 
 @app.get("/characters", tags=["Characters"])
-def list_characters(request: Request):
+def list_characters(request: Request, response: Response):
     """All characters with actor, show, and voice-sample count (voiced first).
 
     Content-negotiated so the admin page can live at a clean /characters URL: a
     browser navigation (Accept: text/html) gets the character admin page, while
     the dashboard's fetch() data calls (which send Accept: application/json) get
     the JSON list. The documented API behaviour is the JSON list.
+
+    Because the page and the JSON share one URL, the response MUST NOT be cached:
+    without this a browser reuses the cached navigation HTML for the SPA's later
+    fetch("/characters") (same URL, no Vary) and the list silently comes back as
+    HTML. Vary: Accept keys any intermediary cache on the header we switch on.
     """
+    headers = {"Vary": "Accept", "Cache-Control": "no-store"}
     page = os.path.join(_DIST, "characters.html")
     if "text/html" in request.headers.get("accept", "") and os.path.exists(page):
-        return FileResponse(page)
+        return FileResponse(page, headers=headers)
+    response.headers.update(headers)
     return db.list_characters()
 
 

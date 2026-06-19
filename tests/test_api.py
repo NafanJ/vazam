@@ -54,6 +54,10 @@ def test_characters_route_content_negotiation(api_client):
         assert 'id="root"' in page.text  # the SPA shell, not JSON
     data = api_client.get("/characters", headers={"Accept": "application/json"})
     assert isinstance(data.json(), list)
+    # Page and JSON share one URL, so the response must not be cached as the
+    # other (otherwise the SPA's fetch reuses the cached navigation HTML).
+    assert data.headers.get("cache-control") == "no-store"
+    assert "Accept" in data.headers.get("vary", "")
 
 
 def test_characters_html_redirects_to_characters(api_client):
