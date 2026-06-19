@@ -36,3 +36,6 @@ Thumbs.db
 
 # Stored enrolled-clip audio (local default dir; container uses a volume)
 enroll_audio/
+
+# TypeScript incremental build info
+*.tsbuildinfo

@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import re
 import wave
 
 import pytest
@@ -22,11 +23,26 @@ from tests.conftest import make_wav_bytes
 def test_dashboard_served(api_client):
     resp = api_client.get("/")
     assert resp.status_code == 200
-    # Serves the recording dashboard HTML (or the JSON fallback if it's absent).
+    # Serves the built React shell (static/dist/index.html) or the JSON fallback
+    # if the web build hasn't run. The UI text lives in the JS bundle now, so the
+    # shell only carries the title + the #root mount point.
     if "text/html" in resp.headers.get("content-type", ""):
-        assert "Vaz" in resp.text and "Identify" in resp.text
+        assert "Vaz" in resp.text and 'id="root"' in resp.text
     else:
         assert resp.json()["docs"] == "/docs"
+
+
+def test_dashboard_assets_reachable(api_client):
+    """The built JS/CSS bundles the shell references must be served by the
+    /assets mount (regression for the Vite build → FastAPI wiring)."""
+    resp = api_client.get("/")
+    if "text/html" not in resp.headers.get("content-type", ""):
+        pytest.skip("web build not present; serving JSON fallback")
+    asset = re.search(r'/assets/[^"\']+\.js', resp.text)
+    assert asset, "no /assets/*.js reference in the shell"
+    bundle = api_client.get(asset.group(0))
+    assert bundle.status_code == 200
+    assert "javascript" in bundle.headers.get("content-type", "")
 
 
 def test_identify_stream_emits_progress_and_result(api_client):

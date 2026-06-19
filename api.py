@@ -42,6 +42,7 @@ import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from db import VazamDB
@@ -123,9 +124,12 @@ async def _basic_auth_middleware(request, call_next):
         return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="Vazam"'})
     return await call_next(request)
 
-# Static single-page UIs (recording dashboard + character admin).
+# Web dashboard (recording UI + character admin) — a React/Vite app in web/,
+# built into static/dist (see web/ and the Dockerfile's node build stage).
+# api.py serves the two built HTML entry points and mounts their hashed assets.
 _STATIC = os.path.join(os.path.dirname(__file__), "static")
-_DASHBOARD = os.path.join(_STATIC, "index.html")
+_DIST = os.path.join(_STATIC, "dist")
+_DASHBOARD = os.path.join(_DIST, "index.html")
 
 # Stored enrolled-clip audio so the dashboard can play clips back. Lives on a
 # server volume (VAZAM_AUDIO_DIR), keyed by embedding id — not in the DB.
@@ -165,10 +169,18 @@ def dashboard():
 @app.get("/characters.html", include_in_schema=False)
 def characters_page():
     """Serve the character admin page (list, edit image/occupation, view sources)."""
-    page = os.path.join(_STATIC, "characters.html")
+    page = os.path.join(_DIST, "characters.html")
     if os.path.exists(page):
         return FileResponse(page)
     raise HTTPException(404, "characters.html not found")
+
+
+# Hashed JS/CSS bundles emitted by the Vite build. Mounted only when present so
+# `uvicorn api:app` still starts in a checkout that hasn't run the web build yet
+# (the HTML routes above just 404 / fall back until `npm run build` is run).
+_ASSETS = os.path.join(_DIST, "assets")
+if os.path.isdir(_ASSETS):
+    app.mount("/assets", StaticFiles(directory=_ASSETS), name="assets")
 
 
 # ── Pydantic models ──────────────────────────────────────────────────────────

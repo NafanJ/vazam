@@ -3,6 +3,19 @@
 # Models (~535 MB: SpeechBrain ECAPA, pyannote VAD/diarization, Demucs) download
 # on first use into TORCH_HOME / HF_HOME — mount those as a volume so they
 # persist across restarts (see docker-compose.yml).
+
+# ── Web dashboard build (React/Vite → static/dist) ───────────────────────────
+# The dashboard lives in web/ as a React app. This stage builds it to
+# /static/dist (outDir is ../static/dist relative to web/); the runtime image
+# copies the result in and api.py serves it. Kept separate so the heavy Python
+# layers below never depend on Node.
+FROM node:20-slim AS webbuild
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
 FROM python:3.12-slim
 
 # System deps: ffmpeg (mp3/m4a decode + Demucs), libsndfile (torchaudio soundfile
@@ -27,6 +40,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 COPY . .
+
+# Built web dashboard from the node stage (overwrites anything in the context;
+# static/dist is .dockerignored so this is the single source of the bundle).
+COPY --from=webbuild /static/dist ./static/dist
 
 # Cache models on a mountable volume; serve responsively on CPU.
 ENV TORCH_HOME=/models/torch \

@@ -44,10 +44,15 @@ vazam/
 ├── embed_batch.py     Bulk audio-to-embedding importer (CLI tool)
 ├── add_character_voice.py  Lazy per-character voice embedding ingestion (CLI tool)
 ├── requirements.txt   Python dependencies
-├── static/            Web dashboard (served by api.py — see Web Dashboard below)
-│   ├── index.html     Record/upload → identify; "Correct?"/"Incorrect?" enroll
-│   └── characters.html  Browse/search characters, edit image/occupation, view sources
-├── Dockerfile         CPU image (torch CPU wheels + ffmpeg); see Deployment below
+├── web/               Web dashboard source — React + Vite + TS (see Web Dashboard)
+│   ├── index.html / characters.html   Vite entry shells (GET / and /characters.html)
+│   ├── vite.config.ts                 Two-page build → ../static/dist
+│   └── src/
+│       ├── shared/    api client, types, WAV 16k encode, formatting helpers
+│       ├── identify/  Identify screen (App + recorder/progress hooks + components)
+│       └── characters/  Character admin (App + DetailModal)
+├── static/dist/       Built dashboard (gitignored; produced by `cd web && npm run build`)
+├── Dockerfile         CPU image (torch CPU wheels + ffmpeg) + node web-build stage; see Deployment
 ├── docker-compose.yml Own stack, joins existing cloudflared network (Cloudflare tunnel)
 ├── migrations/        SQL migrations (apply via Supabase SQL editor / db push)
 │   ├── 001_embedding_quality.sql
@@ -299,18 +304,20 @@ Interactive docs at `http://localhost:8000/docs` when the server is running.
 
 Identification responses include `confidence`, `window_agreement`, `match_level` (`confident` / `possible` / `none`), and (since migration `003`) `character_id`, `image_url`, and `show_title`. `/identify/show` responses include `show` (`null` when no cast consensus) with `speakers_matched` / `speakers_total`.
 
-## Web Dashboard (`static/`)
+## Web Dashboard (`web/` → `static/dist/`)
 
-Two **self-contained** vanilla HTML/CSS/JS files (no build, no npm, no CDN) served by `api.py`. This is the primary way clips are recorded and enrolled from a phone.
+A **React + Vite + TypeScript** app in `web/`, built to `static/dist/` and served by `api.py` (`GET /` → `dist/index.html`, `GET /characters.html` → `dist/characters.html`, hashed bundles mounted at `/assets`). It is the primary way clips are recorded and enrolled from a phone. Two-page build (`web/vite.config.ts`); shared code (typed API client, types, WAV 16k encoder, formatters) lives in `web/src/shared/`. The class names + CSS are ported verbatim from the previous vanilla pages, so the design is unchanged.
 
-- **`static/index.html`** (`GET /`) — record (MediaRecorder) or upload a clip → decode to 16 kHz mono 16-bit WAV client-side (`blobToWav16k`, 20s cap) → **plain `POST /identify`** (single voice) or `POST /identify/show` (scene mode). Pipeline stages are simulated client-side during the request. A `state.running` flag blocks double-submit. Result cards render character art (`image_url`) + show chip, a match-level pill, and two enroll actions: **"Correct?"** (add the clip to the matched character via `POST /enroll`) and **"Incorrect?"** (open the picker to route it to the right character).
-- **`static/characters.html`** (`GET /characters.html`) — browse/search 650+ characters (voiced first), edit `image_url` / `occupation` (`PATCH /characters/{id}`), and view each fingerprint's embedding sources.
+Develop with `cd web && npm install && npm run dev` (Vite dev server; proxy or run the API alongside). Build with `npm run build` (also `npm run typecheck`). The build output is gitignored — `api.py` falls back to the JSON API-info response and the HTML routes 404 until a build exists.
 
-Both strip the design-bundle MOCK fallback so failed requests surface real errors. The React Native `app/` is separate and not built onto a phone yet — the dashboard fills that role.
+- **Identify** (`web/src/identify/`, `GET /`) — record (MediaRecorder, `useRecorder`) or upload a clip → decode to 16 kHz mono 16-bit WAV client-side (`shared/wav.ts` `blobToWav16k`, 20s cap) → **plain `POST /identify`** (single voice) or `POST /identify/show` (scene mode). Pipeline stages are simulated client-side (`useProgress`, which solely owns the elapsed timer so an errored request can't leak it). A `running` state flag blocks double-submit. Result cards render character art (`image_url`) + show chip, a match-level pill, and two enroll actions: **"Correct?"** (`POST /enroll`) and **"Incorrect?"** (opens the picker to route the clip to the right character). Also has a YouTube-link path (`POST /fetch/url` → play/trim → identify/enroll the selection) and a localStorage recording history.
+- **Characters** (`web/src/characters/`, `GET /characters.html`) — browse/search 650+ characters (voiced first), paginated 50/page, edit `image_url` / `occupation` (`PATCH /characters/{id}`) and delete sources (`DELETE /embeddings/{id}`) in the `DetailModal`, with inline clip playback (`/embeddings/{id}/audio`).
+
+Failed requests surface real errors (no mock fallback). The React Native `app/` is a separate, not-yet-shipped mobile frontend — the web dashboard fills that role.
 
 ## Deployment (Docker + Cloudflare Tunnel)
 
-`Dockerfile` builds a CPU image (torch CPU wheels + ffmpeg/libsndfile, `DEVICE=cpu`, `DEMUCS_MODEL=htdemucs`, models cached in a `/models` volume). `docker-compose.yml` runs it as its **own stack** that joins the existing `media-server_default` network so a dashboard-managed **cloudflared** container reaches it at `http://vazam:8000`; a Cloudflare Public Hostname publishes it. Every route except `/health` is gated by **HTTP Basic auth** (`VAZAM_AUTH_USER` / `VAZAM_AUTH_PASS`). Deployed copy lives at `/opt/vazam` (an rsync copy, not a git clone): sync changed files there, then `docker compose build && docker compose up -d` (heavy layers cache; only `COPY . .` onward rebuilds). Secrets come from a `.env` next to the compose file (gitignored).
+`Dockerfile` is multi-stage: a `node:20-slim` **`webbuild`** stage runs `npm ci && npm run build` in `web/` (→ `/static/dist`), then the CPU Python image (torch CPU wheels + ffmpeg/libsndfile, `DEVICE=cpu`, `DEMUCS_MODEL=htdemucs`, models cached in a `/models` volume) copies that build in via `COPY --from=webbuild`. So the dashboard is built reproducibly inside the image — no Node needed on the host or in the serving path, and `static/dist` is `.dockerignore`d so the in-image build is the single source. `docker-compose.yml` runs it as its **own stack** that joins the existing `media-server_default` network so a dashboard-managed **cloudflared** container reaches it at `http://vazam:8000`; a Cloudflare Public Hostname publishes it. Every route except `/health` is gated by **HTTP Basic auth** (`VAZAM_AUTH_USER` / `VAZAM_AUTH_PASS`). Deployed copy lives at `/opt/vazam` (an rsync copy, not a git clone): sync changed files (now including `web/`), then `docker compose build && docker compose up -d` (heavy torch/pip layers cache; the web build re-runs only when `web/` changes). Secrets come from a `.env` next to the compose file (gitignored).
 
 ## Testing Patterns
 
