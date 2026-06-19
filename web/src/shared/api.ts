@@ -12,7 +12,11 @@ export function apiBase(): string {
 }
 
 export async function call(path: string, opts?: RequestInit): Promise<Response> {
-  const r = await fetch(apiBase() + path, opts);
+  // Always advertise JSON so the content-negotiated GET /characters returns the
+  // data list (a browser navigation to /characters sends Accept: text/html and
+  // gets the admin page instead). Caller-supplied headers win.
+  const headers = { Accept: "application/json", ...(opts?.headers || {}) };
+  const r = await fetch(apiBase() + path, { ...opts, headers });
   if (!r.ok) {
     const t = await r.text().catch(() => "");
     throw new Error(`${r.status} ${t.slice(0, 140)}`.trim());

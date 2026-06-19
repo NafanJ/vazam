@@ -404,7 +404,7 @@ export default function App() {
             <small>who's that voice?</small>
           </div>
         </div>
-        <a className="nav-link" href="characters.html">
+        <a className="nav-link" href="/characters">
           Characters
         </a>
       </header>

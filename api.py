@@ -39,9 +39,9 @@ from dotenv import load_dotenv
 load_dotenv()  # loads .env into os.environ (no-op if file absent)
 
 import numpy as np
-from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -167,12 +167,9 @@ def dashboard():
 
 
 @app.get("/characters.html", include_in_schema=False)
-def characters_page():
-    """Serve the character admin page (list, edit image/occupation, view sources)."""
-    page = os.path.join(_DIST, "characters.html")
-    if os.path.exists(page):
-        return FileResponse(page)
-    raise HTTPException(404, "characters.html not found")
+def characters_page_legacy():
+    """Old URL for the character admin page — redirect to the clean /characters."""
+    return RedirectResponse(url="/characters", status_code=301)
 
 
 # Hashed JS/CSS bundles emitted by the Vite build. Mounted only when present so
@@ -614,8 +611,17 @@ class CharacterUpdate(BaseModel):
 
 
 @app.get("/characters", tags=["Characters"])
-def list_characters():
-    """All characters with actor, show, and voice-sample count (voiced first)."""
+def list_characters(request: Request):
+    """All characters with actor, show, and voice-sample count (voiced first).
+
+    Content-negotiated so the admin page can live at a clean /characters URL: a
+    browser navigation (Accept: text/html) gets the character admin page, while
+    the dashboard's fetch() data calls (which send Accept: application/json) get
+    the JSON list. The documented API behaviour is the JSON list.
+    """
+    page = os.path.join(_DIST, "characters.html")
+    if "text/html" in request.headers.get("accept", "") and os.path.exists(page):
+        return FileResponse(page)
     return db.list_characters()
 
 

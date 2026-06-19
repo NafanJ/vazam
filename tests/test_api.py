@@ -45,6 +45,23 @@ def test_dashboard_assets_reachable(api_client):
     assert "javascript" in bundle.headers.get("content-type", "")
 
 
+def test_characters_route_content_negotiation(api_client):
+    """/characters serves the admin page to a browser (Accept: text/html) and
+    the JSON list to the dashboard's fetch() calls (Accept: application/json)."""
+    page = api_client.get("/characters", headers={"Accept": "text/html"})
+    assert page.status_code == 200
+    if "text/html" in page.headers.get("content-type", ""):
+        assert 'id="root"' in page.text  # the SPA shell, not JSON
+    data = api_client.get("/characters", headers={"Accept": "application/json"})
+    assert isinstance(data.json(), list)
+
+
+def test_characters_html_redirects_to_characters(api_client):
+    resp = api_client.get("/characters.html", follow_redirects=False)
+    assert resp.status_code == 301
+    assert resp.headers["location"] == "/characters"
+
+
 def test_identify_stream_emits_progress_and_result(api_client):
     actor_id = api_client.post("/actors", json={"name": "Steve Blum"}).json()["id"]
     api_client.post(

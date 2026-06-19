@@ -45,7 +45,7 @@ vazam/
 ├── add_character_voice.py  Lazy per-character voice embedding ingestion (CLI tool)
 ├── requirements.txt   Python dependencies
 ├── web/               Web dashboard source — React + Vite + TS (see Web Dashboard)
-│   ├── index.html / characters.html   Vite entry shells (GET / and /characters.html)
+│   ├── index.html / characters.html   Vite entry shells (served at GET / and /characters)
 │   ├── vite.config.ts                 Two-page build → ../static/dist
 │   └── src/
 │       ├── shared/    api client, types, WAV 16k encode, formatting helpers
@@ -281,14 +281,14 @@ Interactive docs at `http://localhost:8000/docs` when the server is running.
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET`  | `/` | Web dashboard (`static/index.html`); JSON API info if the file is absent |
-| `GET`  | `/characters.html` | Character admin page (`static/characters.html`) |
+| `GET`  | `/characters.html` | Legacy URL → 301 redirect to `/characters` |
 | `POST` | `/identify` | Upload audio → top-K matches (params: `isolate`, `show_id`, `top_k`, `verify`) |
 | `POST` | `/identify/stream` | Same as `/identify` but streams NDJSON progress stages then the result. Exists for API users; the dashboard now uses plain `/identify` (survives the Cloudflare tunnel better) |
 | `POST` | `/identify/multi` | Diarize + identify each speaker separately (requires `HF_TOKEN`) |
 | `POST` | `/identify/show` | Infer the show from cast co-occurrence, then identify each speaker within it |
 | `POST` | `/enroll` | Add an uploaded clip to a character's fingerprint (`actor_id`, `voice_label`, `isolate`) — powers the dashboard "Correct?/Incorrect?" buttons |
 | `GET`  | `/voices` | Distinct stored voices (actor + `voice_label` + sample counts) for the enroll picker |
-| `GET`  | `/characters` | All characters with `actor_name`, `show_title`, `image_url`, `occupation`, `samples` |
+| `GET`  | `/characters` | Content-negotiated: JSON list (`actor_name`, `show_title`, `image_url`, `occupation`, `samples`) for `Accept: application/json`; the admin page for a browser navigation (`Accept: text/html`) |
 | `GET`  | `/characters/{id}` | One character + its embedding sources |
 | `PATCH`| `/characters/{id}` | Edit `image_url` / `occupation` (from the admin page) |
 | `POST` | `/actors` | Register a voice actor |
@@ -306,12 +306,12 @@ Identification responses include `confidence`, `window_agreement`, `match_level`
 
 ## Web Dashboard (`web/` → `static/dist/`)
 
-A **React + Vite + TypeScript** app in `web/`, built to `static/dist/` and served by `api.py` (`GET /` → `dist/index.html`, `GET /characters.html` → `dist/characters.html`, hashed bundles mounted at `/assets`). It is the primary way clips are recorded and enrolled from a phone. Two-page build (`web/vite.config.ts`); shared code (typed API client, types, WAV 16k encoder, formatters) lives in `web/src/shared/`. The class names + CSS are ported verbatim from the previous vanilla pages, so the design is unchanged.
+A **React + Vite + TypeScript** app in `web/`, built to `static/dist/` and served by `api.py` (`GET /` → `dist/index.html`; `GET /characters` content-negotiates to `dist/characters.html` for browsers, with `/characters.html` 301-redirecting there; hashed bundles mounted at `/assets`). It is the primary way clips are recorded and enrolled from a phone. Two-page build (`web/vite.config.ts`); shared code (typed API client, types, WAV 16k encoder, formatters) lives in `web/src/shared/`. The class names + CSS are ported verbatim from the previous vanilla pages, so the design is unchanged.
 
 Develop with `cd web && npm install && npm run dev` (Vite dev server; proxy or run the API alongside). Build with `npm run build` (also `npm run typecheck`). The build output is gitignored — `api.py` falls back to the JSON API-info response and the HTML routes 404 until a build exists.
 
 - **Identify** (`web/src/identify/`, `GET /`) — record (MediaRecorder, `useRecorder`) or upload a clip → decode to 16 kHz mono 16-bit WAV client-side (`shared/wav.ts` `blobToWav16k`, 20s cap) → **plain `POST /identify`** (single voice) or `POST /identify/show` (scene mode). Pipeline stages are simulated client-side (`useProgress`, which solely owns the elapsed timer so an errored request can't leak it). A `running` state flag blocks double-submit. Result cards render character art (`image_url`) + show chip, a match-level pill, and two enroll actions: **"Correct?"** (`POST /enroll`) and **"Incorrect?"** (opens the picker to route the clip to the right character). Also has a YouTube-link path (`POST /fetch/url` → play/trim → identify/enroll the selection) and a localStorage recording history.
-- **Characters** (`web/src/characters/`, `GET /characters.html`) — browse/search 650+ characters (voiced first), paginated 50/page, edit `image_url` / `occupation` (`PATCH /characters/{id}`) and delete sources (`DELETE /embeddings/{id}`) in the `DetailModal`, with inline clip playback (`/embeddings/{id}/audio`).
+- **Characters** (`web/src/characters/`, `GET /characters`) — browse/search 650+ characters (voiced first), paginated 50/page, edit `image_url` / `occupation` (`PATCH /characters/{id}`) and delete sources (`DELETE /embeddings/{id}`) in the `DetailModal`, with inline clip playback (`/embeddings/{id}/audio`).
 
 Failed requests surface real errors (no mock fallback). The React Native `app/` is a separate, not-yet-shipped mobile frontend — the web dashboard fills that role.
 
